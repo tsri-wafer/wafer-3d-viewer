@@ -63,8 +63,11 @@
   #panel .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
   #panel label{font-size:13px;color:var(--muted);white-space:nowrap;}
   #zScale{flex:1;accent-color:var(--accent);}
-  #status{position:absolute;left:0;right:0;top:45%;text-align:center;color:var(--muted);
-          font-size:14px;pointer-events:none;display:none;}
+  #status{position:absolute;left:14px;right:14px;top:38%;text-align:center;color:var(--err);
+          font-size:14px;pointer-events:none;display:none;line-height:1.65;
+          background:rgba(12,17,24,.94);border:1px solid var(--err);
+          border-radius:9px;padding:12px 14px;}
+  #mInfo{white-space:pre-line;}
 </style>
 </head>
 <body>
@@ -74,9 +77,9 @@
   <h1>晶圓 3D 檢視器</h1>
   <p>對準電腦螢幕上的 <b>QR 動畫</b> 連續掃描,自動接收深度資料並顯示可旋轉的 3D 圖形。若量測檔已帶到手機,也可直接開啟檔案。所有資料只在手機本機處理,不會上傳。</p>
   <button class="primary" id="btnStart">📷 開始掃描</button>
-  <button id="btnFile">📄 開啟資料檔(CSV / TXT)</button>
+  <button id="btnFile">📄 開啟資料檔(.ywa / CSV / TXT・可多選)</button>
   <button id="btnDemo">看看示範 3D</button>
-  <input type="file" id="fileTxt" accept=".csv,.txt,.tsv,.dat,.asc,.xyz" hidden>
+  <input type="file" id="fileTxt" accept=".ywa,.csv,.txt,.tsv,.dat,.asc,.xyz" multiple hidden>
   <div id="homeErr"></div>
 </div>
 
@@ -113,6 +116,13 @@
       <label>高度倍率</label>
       <input type="range" id="zScale" min="0.2" max="4" step="0.05" value="1">
       <label id="zVal" style="width:44px;text-align:right;font-family:Consolas,monospace;color:var(--ink);">1.0×</label>
+    </div>
+    <div class="row" id="sampleRow">
+      <button class="small" id="btnPrev">◀</button>
+      <label id="sampleLbl" style="min-width:76px;text-align:center;font-family:Consolas,monospace;color:var(--ink);">1 / 1</label>
+      <button class="small" id="btnNext">▶</button>
+      <button class="small toggle on" id="btnShared">共用色階</button>
+      <button class="small toggle" id="btnDiff">差異圖</button>
     </div>
     <div class="row">
       <button class="small" id="btnReset">重設視角</button>
@@ -11399,6 +11409,59 @@ function parseMatrixText(text) {
       arr[yy * w + xx] = kept[yy][xx];
   return { arr: arr, w: w, h: h };
 }
+/* ============ YWafer(.ywa)解析(與 sender.html 同一份實作) ============
+ * 前言 + 散點清單,非矩陣。XADR/YADR 是格點座標而不是量測值。
+ * 圓形晶圓外的格點檔案中不存在,還原成矩陣後以 NaN 遮罩。
+ */
+function isYWafer(text) {
+  return /^\s*YSystems\b[^\n]*YWafer/i.test(text) || /^[ \t]*XADR[ \t]*,[ \t]*YADR[ \t]*,/im.test(text);
+}
+function parseYWafer(text, wantCol) {
+  var lines = text.split(/\r\n|\r|\n/), meta = {}, cols = null, hdr = -1, i, t, p;
+  for (i = 0; i < lines.length; i++) {
+    t = lines[i].trim();
+    if (!t) continue;
+    if (/^XADR[ \t]*,[ \t]*YADR\b/i.test(t)) { cols = t.split(','); hdr = i; break; }
+    p = t.split(',');
+    if (p.length >= 2) meta[p[0].trim()] = p.slice(1).map(function (s) { return s.trim(); });
+  }
+  if (hdr < 0) throw new Error('不是 YWafer 檔:找不到 XADR,YADR 標題列');
+  for (i = 0; i < cols.length; i++) cols[i] = cols[i].trim();
+
+  var valCols = [];
+  for (i = 2; i < cols.length; i++) if (cols[i] !== '') valCols.push(cols[i]);
+  if (!valCols.length) throw new Error('這個 YWafer 檔沒有量測欄位(標題列只有 XADR,YADR)');
+  var ci = 2;
+  if (wantCol) { var k = cols.indexOf(wantCol); if (k >= 2) ci = k; }
+
+  var xs = [], ys = [], vs = [], xmin = Infinity, xmax = -Infinity, ymin = Infinity, ymax = -Infinity;
+  for (i = hdr + 1; i < lines.length; i++) {
+    t = lines[i].trim();
+    if (!t) continue;
+    p = t.split(',');
+    if (p.length <= ci) continue;
+    var x = parseFloat(p[0]), y = parseFloat(p[1]);
+    if (!isFinite(x) || !isFinite(y)) continue; // 略過結尾的 ",,," 空列
+    x = Math.round(x); y = Math.round(y);
+    var s = p[ci].trim(), v = (s === '' || /^[+-]?nan$/i.test(s)) ? NaN : parseFloat(s);
+    xs.push(x); ys.push(y); vs.push(v);
+    if (x < xmin) xmin = x; if (x > xmax) xmax = x;
+    if (y < ymin) ymin = y; if (y > ymax) ymax = y;
+  }
+  if (!xs.length) throw new Error('YWafer 檔沒有可用的量測點');
+  var w = xmax - xmin + 1, h = ymax - ymin + 1;
+  if (w < 2 || h < 2) throw new Error('YWafer 量測點範圍太小(至少需 2×2 格)');
+  if (w * h > 4200000) throw new Error('資料太大(超過 420 萬點),請先裁切');
+
+  var arr = new Float32Array(w * h);
+  for (i = 0; i < arr.length; i++) arr[i] = NaN; // 預設全遮罩
+  for (i = 0; i < xs.length; i++) {
+    // YADR 由下往上,矩陣列 0 在最上方,故上下翻轉讓 +Y 朝上
+    arr[(ymax - ys[i]) * w + (xs[i] - xmin)] = vs[i];
+  }
+  return { arr: arr, w: w, h: h, cols: valCols, col: cols[ci], ywaMeta: meta };
+}
+
 function downsample(src, sw, sh, tw, th) {
   var out = new Float32Array(tw * th);
   for (var ty = 0; ty < th; ty++) {
@@ -11417,7 +11480,7 @@ function downsample(src, sw, sh, tw, th) {
   return out;
 }
 var FILE_MAX_DIM = 256; // 直接開檔時的網格上限(手機 3D 效能考量)
-function showFromMatrix(res, name, unit) {
+function matrixToSample(res, name, unit) {
   var w = res.w, h = res.h, arr = res.arr;
   var maxDim = Math.max(w, h);
   if (maxDim > FILE_MAX_DIM) {
@@ -11436,10 +11499,13 @@ function showFromMatrix(res, name, unit) {
   var values = new Float32Array(arr.length);
   for (i = 0; i < arr.length; i++) {
     v = arr[i];
-    values[i] = v === v ? (v - mn) / (mx - mn) : 0;
+    // 遮罩保留成 NaN。原本寫 0 會讓圓外的格點跟「最低值」變成同一個東西,
+    // 圓形晶圓就會被畫成一塊方形地板。
+    values[i] = v === v ? (v - mn) / (mx - mn) : NaN;
   }
-  show3D({ meta: { v: 1, w: w, h: h, min: mn, max: mx, unit: unit || '', name: name || '檔案資料' }, values: values });
+  return { meta: { v: 1, w: w, h: h, min: mn, max: mx, unit: unit || '', name: name || '檔案資料' }, values: values };
 }
+function showFromMatrix(res, name, unit) { show3D(matrixToSample(res, name, unit)); }
 
 /* ============ 封包解析 ============ */
 function parsePayload(deflated) {
@@ -11636,9 +11702,40 @@ function processImageData(img) {
 
 /* ============ 3D 顯示 ============ */
 var three = null;      // {renderer,scene,camera,controls,mesh}
-var viewData = null;   // 目前顯示的資料
+var viewData = null;   // 目前顯示的資料(= 差異圖,或 samples[activeIdx])
 var inverted = false;
 var HEIGHT_UNITS = 22;
+
+/* ---- 多樣本比較狀態 ----
+ * samples[i].values 是「相對於該樣本自己 min/max」的 0~1 值,NaN 代表遮罩(圓外)。
+ * 高度與顏色一律先用 realAt() 還原成實際值,再套 currentScale() 的共用尺。
+ * 不可以直接拿 values 當高度/顏色:那會讓每片各自 normalize,兩片翹曲差 6.5 倍
+ * 也會畫成一模一樣。
+ */
+var samples = [];
+var activeIdx = 0;
+var sharedScale = true;
+var diffSample = null; // 非 null 時顯示差異圖
+
+function realAt(s, i) {
+  var t = s.values[i];
+  if (t !== t) return NaN; // 遮罩點
+  return s.meta.min + t * (s.meta.max - s.meta.min);
+}
+function currentSample() { return diffSample || samples[activeIdx] || null; }
+function currentScale() {
+  var s = currentSample();
+  if (!s) return { min: 0, max: 1, unit: '' };
+  // 差異圖有自己的尺;單片或使用者關掉共用色階時也用自己的
+  if (diffSample || !sharedScale || samples.length < 2)
+    return { min: s.meta.min, max: s.meta.max, unit: s.meta.unit || '' };
+  var mn = Infinity, mx = -Infinity;
+  for (var i = 0; i < samples.length; i++) {
+    if (samples[i].meta.min < mn) mn = samples[i].meta.min;
+    if (samples[i].meta.max > mx) mx = samples[i].meta.max;
+  }
+  return { min: mn, max: mx, unit: samples[0].meta.unit || '' };
+}
 var CAM_POS = [70, 58, 96], CAM_TARGET = [0, 9, 0];
 
 function initThree() {
@@ -11686,37 +11783,95 @@ function initThree() {
   })();
 }
 
-function buildMesh(data, invert) {
-  var w = data.meta.w, h = data.meta.h, vals = data.values;
+function buildMesh(data, invert, scale) {
+  var w = data.meta.w, h = data.meta.h;
   var maxDim = Math.max(w, h);
   var pw = 100 * w / maxDim, ph = 100 * h / maxDim;
   var geo = new THREE.PlaneGeometry(pw, ph, w - 1, h - 1);
   geo.rotateX(-Math.PI / 2);
   var pos = geo.attributes.position;
   var colors = new Float32Array(pos.count * 3);
-  for (var i = 0; i < pos.count; i++) {
-    var t = vals[i];
+  var span = scale.max - scale.min;
+  if (Math.abs(span) < 1e-12) span = 1;
+  var ok = new Uint8Array(pos.count); // 該格點是否有實際量測值
+  var i, t, col;
+  for (i = 0; i < pos.count; i++) {
+    var r = realAt(data, i);
+    if (r !== r) { pos.setY(i, 0); continue; } // 遮罩點:壓平並留黑,三角形稍後移除
+    t = (r - scale.min) / span;
+    if (t < 0) t = 0; else if (t > 1) t = 1;   // 超出共用尺時夾住,不外插
     if (invert) t = 1 - t;
     pos.setY(i, t * HEIGHT_UNITS);
-    var c = viridis(t);
-    colors[i * 3] = c[0] / 255; colors[i * 3 + 1] = c[1] / 255; colors[i * 3 + 2] = c[2] / 255;
+    col = viridis(t);
+    colors[i * 3] = col[0] / 255; colors[i * 3 + 1] = col[1] / 255; colors[i * 3 + 2] = col[2] / 255;
+    ok[i] = 1;
   }
   geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  // 移除任何碰到遮罩點的三角形:圓形晶圓要真的是圓的,而不是在圓外補一塊平地板
+  var src = geo.index.array, keep = [];
+  for (var f = 0; f < src.length; f += 3) {
+    var i0 = src[f], i1 = src[f + 1], i2 = src[f + 2];
+    if (ok[i0] && ok[i1] && ok[i2]) keep.push(i0, i1, i2);
+  }
+  geo.setIndex(keep);
   geo.computeVertexNormals();
+  geo.computeBoundingSphere();
   var mat = new THREE.MeshStandardMaterial({
     vertexColors: true, roughness: 0.72, metalness: 0.08, side: THREE.DoubleSide
   });
   return new THREE.Mesh(geo, mat);
 }
 
-function show3D(data) {
-  viewData = data;
-  inverted = false;
-  document.getElementById('btnInvert').classList.remove('on');
+/* 差異圖 A − B。刻意擋掉沒有物理意義的相減,而不是算出一個看起來很專業的垃圾。 */
+function makeDiff(a, b) {
+  if (a.meta.w !== b.meta.w || a.meta.h !== b.meta.h)
+    throw new Error('格點尺寸不同(' + a.meta.w + '×' + a.meta.h + ' vs ' +
+      b.meta.w + '×' + b.meta.h + '),無法相減。差異圖只適用同一個量測 setup 的不同片。');
+  if ((a.meta.unit || '') !== (b.meta.unit || ''))
+    throw new Error('單位不同(' + (a.meta.unit || '無') + ' vs ' + (b.meta.unit || '無') +
+      '),相減沒有意義。');
+  var n = a.meta.w * a.meta.h, d = new Float32Array(n), mn = Infinity, mx = -Infinity, i, v;
+  for (i = 0; i < n; i++) {
+    var ra = realAt(a, i), rb = realAt(b, i);
+    v = (ra === ra && rb === rb) ? ra - rb : NaN; // 任一片沒量到就是沒得比
+    d[i] = v;
+    if (v === v) { if (v < mn) mn = v; if (v > mx) mx = v; }
+  }
+  if (mn === Infinity) throw new Error('兩片沒有重疊的有效量測點,無法相減。');
+  if (mx - mn < 1e-12) mx = mn + 1;
+  var values = new Float32Array(n);
+  for (i = 0; i < n; i++) values[i] = d[i] === d[i] ? (d[i] - mn) / (mx - mn) : NaN;
+  return {
+    meta: {
+      v: 1, w: a.meta.w, h: a.meta.h, min: mn, max: mx, unit: a.meta.unit || '',
+      name: (a.meta.name || 'A') + ' − ' + (b.meta.name || 'B')
+    },
+    values: values
+  };
+}
+
+/* 單筆(QR 掃描 / 示範)→ 取代整個樣本集 */
+function show3D(data) { showSamples([data]); }
+/* 多筆(直接開檔可多選)→ 一起載入供比較 */
+function showSamples(list) {
+  samples = list;
+  activeIdx = 0;
+  diffSample = null;
+  sharedScale = true;
+  showCurrent(true);
+}
+function showCurrent(resetInvert) {
+  viewData = currentSample();
+  if (!viewData) return;
+  if (resetInvert) {
+    inverted = false;
+    document.getElementById('btnInvert').classList.remove('on');
+  }
   switchScreen('scrView');
   initThree();
   rebuildMesh();
   updateMetaUI();
+  updateSampleUI();
 }
 function rebuildMesh() {
   if (!three || !viewData) return;
@@ -11725,15 +11880,37 @@ function rebuildMesh() {
     three.mesh.geometry.dispose();
     three.mesh.material.dispose();
   }
-  three.mesh = buildMesh(viewData, inverted);
+  three.mesh = buildMesh(viewData, inverted, currentScale());
   three.mesh.scale.y = parseFloat(document.getElementById('zScale').value);
   three.scene.add(three.mesh);
 }
+var statusTimer = null;
+function showStatus(msg, ms) {
+  var el = document.getElementById('status');
+  el.textContent = msg || '';
+  el.style.display = msg ? 'block' : 'none';
+  if (statusTimer) { clearTimeout(statusTimer); statusTimer = null; }
+  if (msg && ms) statusTimer = setTimeout(function () {
+    el.textContent = ''; el.style.display = 'none';
+  }, ms);
+}
+function updateSampleUI() {
+  document.getElementById('sampleRow').style.display = samples.length > 1 ? '' : 'none';
+  document.getElementById('sampleLbl').textContent =
+    diffSample ? '差異圖' : (activeIdx + 1) + ' / ' + samples.length;
+  document.getElementById('btnShared').classList.toggle('on', sharedScale);
+  document.getElementById('btnDiff').classList.toggle('on', !!diffSample);
+  document.getElementById('btnPrev').disabled = !!diffSample;
+  document.getElementById('btnNext').disabled = !!diffSample;
+}
 function updateMetaUI() {
-  var m = viewData.meta;
+  var m = viewData.meta, sc = currentScale();
   document.getElementById('mName').textContent = m.name || '未命名資料';
-  document.getElementById('mInfo').textContent =
-    m.w + ' × ' + m.h + ' ・ 深度 ' + fmtNum(m.min) + ' ~ ' + fmtNum(m.max) + ' ' + (m.unit || '');
+  var info = m.w + ' × ' + m.h + ' ・ 本片 ' + fmtNum(m.min) + ' ~ ' + fmtNum(m.max) + ' ' + (m.unit || '');
+  if (!diffSample && sharedScale && samples.length > 1)
+    info += '\n共用色階(' + samples.length + ' 片)' + fmtNum(sc.min) + ' ~ ' + fmtNum(sc.max) + ' ' + (sc.unit || '');
+  if (diffSample) info += '\n差值範圍,正值代表前者較高';
+  document.getElementById('mInfo').textContent = info;
   var stops = [];
   for (var i = 0; i < VIRIDIS.length; i++) {
     var c = VIRIDIS[i];
@@ -11741,9 +11918,10 @@ function updateMetaUI() {
   }
   document.getElementById('legend').style.background =
     'linear-gradient(to top,' + stops.join(',') + ')';
-  var maxL = inverted ? m.min : m.max, minL = inverted ? m.max : m.min;
-  document.getElementById('legendMax').textContent = fmtNum(maxL) + ' ' + (m.unit || '');
-  document.getElementById('legendMin').textContent = fmtNum(minL) + ' ' + (m.unit || '');
+  // 圖例必須跟著「實際採用的色階」走,不是跟著單片的 min/max,否則共用色階時會說謊
+  var maxL = inverted ? sc.min : sc.max, minL = inverted ? sc.max : sc.min;
+  document.getElementById('legendMax').textContent = fmtNum(maxL) + ' ' + (sc.unit || '');
+  document.getElementById('legendMin').textContent = fmtNum(minL) + ' ' + (sc.unit || '');
 }
 
 /* ============ 事件 ============ */
@@ -11762,20 +11940,63 @@ document.getElementById('btnFile').addEventListener('click', function () {
   document.getElementById('fileTxt').click();
 });
 document.getElementById('fileTxt').addEventListener('change', function () {
-  var f = this.files[0];
+  var files = Array.prototype.slice.call(this.files);
   this.value = '';
-  if (!f) return;
+  if (!files.length) return;
   var err = document.getElementById('homeErr');
   err.textContent = '';
-  var rd = new FileReader();
-  rd.onload = function () {
-    try {
-      showFromMatrix(parseMatrixText(rd.result),
-                     f.name.replace(/\.[^.]+$/, '').slice(0, 40), '');
-    } catch (e) { err.textContent = '無法讀取:' + e.message; }
-  };
-  rd.onerror = function () { err.textContent = '讀取檔案失敗'; };
-  rd.readAsText(f);
+  var out = [], errs = [], done = 0;
+
+  function finish() {
+    if (++done < files.length) return;
+    var list = [];
+    for (var i = 0; i < out.length; i++) if (out[i]) list.push(out[i]);
+    if (!list.length) { err.textContent = '無法讀取:' + errs.join(' / '); return; }
+    if (errs.length) err.textContent = '已略過 ' + errs.length + ' 個檔案:' + errs.join(' / ');
+    showSamples(list);
+  }
+  files.forEach(function (f, idx) {
+    var rd = new FileReader();
+    rd.onload = function () {
+      try {
+        var base = f.name.replace(/\.[^.]+$/, '').slice(0, 40), txt = rd.result;
+        if (isYWafer(txt)) {
+          var y = parseYWafer(txt, null); // 多欄位時預設取第一個量測欄
+          out[idx] = matrixToSample(y, base + '(' + y.col + ')', '');
+        } else {
+          out[idx] = matrixToSample(parseMatrixText(txt), base, '');
+        }
+      } catch (e) { errs.push(f.name + ' → ' + e.message); }
+      finish();
+    };
+    rd.onerror = function () { errs.push(f.name + ' → 讀取失敗'); finish(); };
+    rd.readAsText(f);
+  });
+});
+document.getElementById('btnPrev').addEventListener('click', function () {
+  if (diffSample || samples.length < 2) return;
+  activeIdx = (activeIdx - 1 + samples.length) % samples.length;
+  showCurrent(false);
+});
+document.getElementById('btnNext').addEventListener('click', function () {
+  if (diffSample || samples.length < 2) return;
+  activeIdx = (activeIdx + 1) % samples.length;
+  showCurrent(false);
+});
+document.getElementById('btnShared').addEventListener('click', function () {
+  sharedScale = !sharedScale;
+  showCurrent(false);
+});
+document.getElementById('btnDiff').addEventListener('click', function () {
+  if (diffSample) { diffSample = null; showCurrent(false); return; }
+  if (samples.length < 2) return;
+  try {
+    // 差異圖 = 目前這片 減 下一片
+    diffSample = makeDiff(samples[activeIdx], samples[(activeIdx + 1) % samples.length]);
+    showCurrent(false);
+  } catch (e) {
+    showStatus(e.message, 8000); // 擋下來說明原因,不算出無意義的數字
+  }
 });
 document.getElementById('zScale').addEventListener('input', function () {
   document.getElementById('zVal').textContent = parseFloat(this.value).toFixed(2).replace(/0$/, '') + '×';
@@ -11812,7 +12033,18 @@ window.__wv = {
   getDecoded: function () { return decoded; },
   parsePayload: parsePayload,
   parseMatrixText: parseMatrixText,
-  showFromMatrix: showFromMatrix
+  showFromMatrix: showFromMatrix,
+  isYWafer: isYWafer,
+  parseYWafer: parseYWafer,
+  matrixToSample: matrixToSample,
+  showSamples: showSamples,
+  buildMesh: buildMesh,
+  makeDiff: makeDiff,
+  currentScale: currentScale,
+  realAt: realAt,
+  getSamples: function () { return samples; },
+  setShared: function (v) { sharedScale = v; showCurrent(false); },
+  setActive: function (i) { activeIdx = i; showCurrent(false); }
 };
 </script>
 </body>
