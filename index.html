@@ -11745,7 +11745,7 @@ function currentSample() { return diffSample || samples[activeIdx] || null; }
  * 這跟 makeDiff 擋下的是同一類錯誤,不能只擋一邊。 */
 function samplesCompatible() {
   if (samples.length < 2) return true;
-  var key = function (s) { return (s.meta.col || '') + ' ' + (s.meta.unit || ''); };
+  var key = function (s) { return (s.meta.col || '') + '\u0000' + (s.meta.unit || ''); };
   var first = key(samples[0]);
   for (var i = 1; i < samples.length; i++) if (key(samples[i]) !== first) return false;
   return true;
