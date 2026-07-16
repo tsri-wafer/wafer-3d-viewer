@@ -27,7 +27,8 @@
   #scrHome h1{font-size:22px;letter-spacing:2px;}
   #scrHome p{color:var(--muted);font-size:14px;line-height:1.8;max-width:340px;}
   #scrHome button{width:240px;}
-  #homeErr{color:var(--err);font-size:13px;min-height:18px;max-width:320px;}
+  #homeErr{color:var(--err);font-size:13px;min-height:18px;max-width:320px;
+           white-space:pre-line;line-height:1.6;}
 
   /* ---- 掃描頁 ---- */
   #scrScan{background:#000;}
@@ -11480,7 +11481,7 @@ function downsample(src, sw, sh, tw, th) {
   return out;
 }
 var FILE_MAX_DIM = 256; // 直接開檔時的網格上限(手機 3D 效能考量)
-function matrixToSample(res, name, unit) {
+function matrixToSample(res, name, unit, col) {
   var w = res.w, h = res.h, arr = res.arr;
   var maxDim = Math.max(w, h);
   if (maxDim > FILE_MAX_DIM) {
@@ -11503,7 +11504,14 @@ function matrixToSample(res, name, unit) {
     // 圓形晶圓就會被畫成一塊方形地板。
     values[i] = v === v ? (v - mn) / (mx - mn) : NaN;
   }
-  return { meta: { v: 1, w: w, h: h, min: mn, max: mx, unit: unit || '', name: name || '檔案資料' }, values: values };
+  return {
+    meta: {
+      v: 1, w: w, h: h, min: mn, max: mx, unit: unit || '',
+      name: name || '檔案資料',
+      col: col || '' // 量測欄位名(.ywa 用):判斷多樣本能否共用色階
+    },
+    values: values
+  };
 }
 function showFromMatrix(res, name, unit) { show3D(matrixToSample(res, name, unit)); }
 
@@ -11648,8 +11656,16 @@ function startScan() {
     var m = '無法開啟相機:' + (e && e.name ? e.name : e);
     if (e && e.name === 'NotAllowedError') m = '相機權限被拒絕。請到瀏覽器設定允許本頁使用相機。';
     if (e && e.name === 'NotFoundError') m = '找不到相機裝置。';
-    if (location.protocol === 'http:' && location.hostname !== 'localhost')
-      m += '(注意:http:// 網址無法用相機,需 https:// 或直接開啟本機檔案)';
+    // file:// 沒有 origin,瀏覽器無從綁定相機權限 —— 設定裡不會有可以開的開關,
+    // 所以不能沿用上面那句「請到設定允許」,那會叫使用者去找一個不存在的東西。
+    if (location.protocol === 'file:')
+      m = 'file:// 開啟的頁面無法使用相機。瀏覽器把權限綁在網址來源上,而本機檔案沒有來源,' +
+          '因此到設定裡也找不到可以開啟的開關。請改用 https:// 網址開啟本頁。\n' +
+          '若只是想看 3D,可直接用「開啟資料檔」—— 那個不需要相機。';
+    else if (location.protocol === 'http:' &&
+             location.hostname !== 'localhost' && location.hostname !== '127.0.0.1')
+      m += '(注意:http:// 網址無法用相機,需 https:// 或 localhost。' +
+           '連到別台電腦的區網 IP 不算 localhost。)';
     err.textContent = m;
     stopScan();
     switchScreen('scrHome');
@@ -11723,11 +11739,22 @@ function realAt(s, i) {
   return s.meta.min + t * (s.meta.max - s.meta.min);
 }
 function currentSample() { return diffSample || samples[activeIdx] || null; }
+
+/* 共用色階只在「同一種量測」之間有意義。把翹曲(WS,±16 µm)和 Edge(297~327)
+ * 放到同一把尺上,等於把溫度和壓力畫在同一條軸 —— 前者會被壓成一條平線。
+ * 這跟 makeDiff 擋下的是同一類錯誤,不能只擋一邊。 */
+function samplesCompatible() {
+  if (samples.length < 2) return true;
+  var key = function (s) { return (s.meta.col || '') + ' ' + (s.meta.unit || ''); };
+  var first = key(samples[0]);
+  for (var i = 1; i < samples.length; i++) if (key(samples[i]) !== first) return false;
+  return true;
+}
 function currentScale() {
   var s = currentSample();
   if (!s) return { min: 0, max: 1, unit: '' };
-  // 差異圖有自己的尺;單片或使用者關掉共用色階時也用自己的
-  if (diffSample || !sharedScale || samples.length < 2)
+  // 差異圖有自己的尺;單片、關掉共用、或量測種類不同時都用各自的
+  if (diffSample || !sharedScale || samples.length < 2 || !samplesCompatible())
     return { min: s.meta.min, max: s.meta.max, unit: s.meta.unit || '' };
   var mn = Infinity, mx = -Infinity;
   for (var i = 0; i < samples.length; i++) {
@@ -11898,7 +11925,10 @@ function updateSampleUI() {
   document.getElementById('sampleRow').style.display = samples.length > 1 ? '' : 'none';
   document.getElementById('sampleLbl').textContent =
     diffSample ? '差異圖' : (activeIdx + 1) + ' / ' + samples.length;
-  document.getElementById('btnShared').classList.toggle('on', sharedScale);
+  var compat = samplesCompatible();
+  var bs = document.getElementById('btnShared');
+  bs.classList.toggle('on', sharedScale && compat);
+  bs.disabled = !compat; // 量測種類不同時共用色階沒有意義,不給開
   document.getElementById('btnDiff').classList.toggle('on', !!diffSample);
   document.getElementById('btnPrev').disabled = !!diffSample;
   document.getElementById('btnNext').disabled = !!diffSample;
@@ -11907,8 +11937,14 @@ function updateMetaUI() {
   var m = viewData.meta, sc = currentScale();
   document.getElementById('mName').textContent = m.name || '未命名資料';
   var info = m.w + ' × ' + m.h + ' ・ 本片 ' + fmtNum(m.min) + ' ~ ' + fmtNum(m.max) + ' ' + (m.unit || '');
-  if (!diffSample && sharedScale && samples.length > 1)
-    info += '\n共用色階(' + samples.length + ' 片)' + fmtNum(sc.min) + ' ~ ' + fmtNum(sc.max) + ' ' + (sc.unit || '');
+  if (!diffSample && samples.length > 1) {
+    if (!samplesCompatible())
+      info += '\n⚠ 各片量測種類不同,無法共用色階 ・ 外觀不可互相比較';
+    else if (sharedScale)
+      info += '\n共用色階(' + samples.length + ' 片)' + fmtNum(sc.min) + ' ~ ' + fmtNum(sc.max) + ' ' + (sc.unit || '');
+    else
+      info += '\n⚠ 共用色階已關閉,各片自行normalize ・ 外觀不可互相比較';
+  }
   if (diffSample) info += '\n差值範圍,正值代表前者較高';
   document.getElementById('mInfo').textContent = info;
   var stops = [];
@@ -11962,9 +11998,9 @@ document.getElementById('fileTxt').addEventListener('change', function () {
         var base = f.name.replace(/\.[^.]+$/, '').slice(0, 40), txt = rd.result;
         if (isYWafer(txt)) {
           var y = parseYWafer(txt, null); // 多欄位時預設取第一個量測欄
-          out[idx] = matrixToSample(y, base + '(' + y.col + ')', '');
+          out[idx] = matrixToSample(y, base + '(' + y.col + ')', '', y.col);
         } else {
-          out[idx] = matrixToSample(parseMatrixText(txt), base, '');
+          out[idx] = matrixToSample(parseMatrixText(txt), base, '', '');
         }
       } catch (e) { errs.push(f.name + ' → ' + e.message); }
       finish();
@@ -12041,6 +12077,7 @@ window.__wv = {
   buildMesh: buildMesh,
   makeDiff: makeDiff,
   currentScale: currentScale,
+  samplesCompatible: samplesCompatible,
   realAt: realAt,
   getSamples: function () { return samples; },
   setShared: function (v) { sharedScale = v; showCurrent(false); },
