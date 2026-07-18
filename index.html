@@ -11301,9 +11301,15 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
 </script>
 <script>
 'use strict';
-/* ============ 共用核心(與 sender.html 對應,協定 WD1) ============ */
+/* ============ 共用核心(與 sender.html 對應,協定 WD1) ============
+ * raw 的語意依 header 的 v 而定:
+ *   v1 = 0..255 全是實際值;NaN 也被寫成 0,因此圓外與最低值無從分辨(舊電腦端)
+ *   v2 = 0 保留為「這格沒有量測值」,實際值量化在 1..255
+ * 兩種都要收:電腦端是 USB 拷貝出去的,手機端網址會自動更新,新舊必然會混用。
+ */
 var PROTO = 'WD1';
 var MAGIC = [87, 68, 48, 49];
+var NODATA = 0;    // v2 raw 中代表「沒有量測值」的哨兵
 var MAX_FRAMES = 240;            // 與 sender 端上限一致
 var MAX_CHUNK_CHARS = 1200;      // 單幀 base64 上限(sender 最高密度為 1000)
 var MAX_DEFLATED_BYTES = 200 * 1024;      // 合法資料遠小於此(128×128 約 16KB)
@@ -11504,9 +11510,11 @@ function matrixToSample(res, name, unit, col) {
     // 圓形晶圓就會被畫成一塊方形地板。
     values[i] = v === v ? (v - mn) / (mx - mn) : NaN;
   }
+  // 不帶 v:傳輸協定的版本號只描述 raw 的編碼方式,本機開檔沒有經過 raw,
+  // 標上 v 只會讓人以為這裡的遮罩語意跟著版本走。
   return {
     meta: {
-      v: 1, w: w, h: h, min: mn, max: mx, unit: unit || '',
+      w: w, h: h, min: mn, max: mx, unit: unit || '',
       name: name || '檔案資料',
       col: col || '' // 量測欄位名(.ywa 用):判斷多樣本能否共用色階
     },
@@ -11529,13 +11537,19 @@ function parsePayload(deflated) {
   var meta;
   try { meta = JSON.parse(utf8Decode(buf.subarray(6, 6 + hl))); }
   catch (e) { throw new Error('標頭解析失敗'); }
-  if (meta.v !== 1) throw new Error('不支援的版本:' + meta.v);
+  if (meta.v !== 1 && meta.v !== 2) throw new Error('不支援的版本:' + meta.v);
   var w = meta.w | 0, h = meta.h | 0;
   if (w < 2 || h < 2 || w > 1024 || h > 1024) throw new Error('矩陣尺寸異常');
   var raw = buf.subarray(6 + hl);
   if (raw.length !== w * h) throw new Error('資料長度與尺寸不符');
-  var values = new Float32Array(w * h);
-  for (var i = 0; i < raw.length; i++) values[i] = raw[i] / 255;
+  var values = new Float32Array(w * h), i;
+  if (meta.v === 1) {
+    // v1 沒帶遮罩資訊。圓外的格點在這裡跟最低值一樣是 0,只能全部當實際值,
+    // 圓片會被畫成方形板 —— 這是舊電腦端的既有行為,不在這裡猜補。
+    for (i = 0; i < raw.length; i++) values[i] = raw[i] / 255;
+  } else {
+    for (i = 0; i < raw.length; i++) values[i] = raw[i] === NODATA ? NaN : (raw[i] - 1) / 254;
+  }
   return { meta: meta, values: values, raw: raw };
 }
 
@@ -11870,7 +11884,7 @@ function makeDiff(a, b) {
   for (i = 0; i < n; i++) values[i] = d[i] === d[i] ? (d[i] - mn) / (mx - mn) : NaN;
   return {
     meta: {
-      v: 1, w: a.meta.w, h: a.meta.h, min: mn, max: mx, unit: a.meta.unit || '',
+      w: a.meta.w, h: a.meta.h, min: mn, max: mx, unit: a.meta.unit || '',
       name: (a.meta.name || 'A') + ' − ' + (b.meta.name || 'B')
     },
     values: values
