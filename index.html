@@ -20,6 +20,9 @@
   button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600;}
   button.small{font-size:13px;padding:8px 12px;}
   button.toggle.on{background:var(--accent);border-color:var(--accent);color:#fff;}
+  button:disabled{opacity:.45;}
+  select{font:inherit;font-size:13px;padding:7px 8px;border-radius:8px;
+         border:1px solid var(--line);background:#1c2430;color:var(--ink);}
 
   /* ---- 首頁 ---- */
   #scrHome{align-items:center;justify-content:center;gap:14px;padding:26px;text-align:center;}
@@ -68,6 +71,7 @@
           font-size:14px;pointer-events:none;display:none;line-height:1.65;
           background:rgba(12,17,24,.94);border:1px solid var(--err);
           border-radius:9px;padding:12px 14px;}
+  #status.info{color:var(--ink);border-color:var(--accent);}
   #mInfo{white-space:pre-line;}
 </style>
 </head>
@@ -130,6 +134,16 @@
       <button class="small toggle" id="btnRotate">自動旋轉</button>
       <button class="small toggle" id="btnInvert">深度反轉</button>
       <button class="small primary" id="btnRescan">📷 重新掃描</button>
+    </div>
+    <div class="row">
+      <button class="small" id="btnPdf">📄 輸出 PDF 報表</button>
+      <label for="pdfClip">色階裁切</label>
+      <select id="pdfClip">
+        <option value="0" selected>0%(原始)</option>
+        <option value="0.5">0.5%</option>
+        <option value="1">1%</option>
+        <option value="2">2%</option>
+      </select>
     </div>
   </div>
 </div>
@@ -11300,6 +11314,884 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
 
 </script>
 <script>
+/* ============ 極簡 PDF 產生器(本專案自有,非第三方函式庫) ============
+ * 只用瀏覽器內建能力產生 PDF,不引入 jsPDF —— 部署形式是「單一 HTML 離線檔」,
+ * 多扛一份 300KB 的函式庫只為了畫字和貼圖並不划算。
+ *
+ *   文字 = PDF 內建的 Helvetica / Helvetica-Bold(標準十四字型,任何檢視器都有,
+ *          不必內嵌字型檔),編碼 WinAnsi。因此報表文字一律用英數 —— 中文無法
+ *          用內建字型輸出,要中文就得內嵌一份 CJK 字型(數 MB),與離線單檔互斥。
+ *          非 WinAnsi 的字(如中文檔名)由呼叫端自行決定要不要改用圖片繪製。
+ *   照片 = canvas 匯出的 JPEG 直接以 /DCTDecode 內嵌(不必解碼)。
+ *   點陣 = 原始 RGB 位元組經 pako deflate 後以 /FlateDecode 內嵌(無失真,
+ *          用在 2D map 這種有銳利邊界的圖)。
+ *
+ * 座標一律「左上角原點、y 向下」,只有寫檔那一刻才換算成 PDF 的左下角原點,
+ * 版面計算才不用整頁倒著想。
+ */
+(function (global) {
+'use strict';
+
+/* WinAnsi 與 Unicode 不同的那一段(0x80–0x9F)。其餘 0x20–0x7E、0xA0–0xFF 同碼位,
+ * 因此 µ(U+00B5)、°、± 這些量測報表常用字元可以直接輸出。 */
+var WIN_EXTRA = {
+  0x20AC: 0x80, 0x201A: 0x82, 0x0192: 0x83, 0x201E: 0x84, 0x2026: 0x85,
+  0x2020: 0x86, 0x2021: 0x87, 0x02C6: 0x88, 0x2030: 0x89, 0x0160: 0x8A,
+  0x2039: 0x8B, 0x0152: 0x8C, 0x017D: 0x8E, 0x2018: 0x91, 0x2019: 0x92,
+  0x201C: 0x93, 0x201D: 0x94, 0x2022: 0x95, 0x2013: 0x96, 0x2014: 0x97,
+  0x02DC: 0x98, 0x2122: 0x99, 0x0161: 0x9A, 0x203A: 0x9B, 0x0153: 0x9C,
+  0x017E: 0x9E, 0x0178: 0x9F,
+  0x2212: 0x2D  // 數學減號 U+2212 → ASCII '-';WinAnsi 沒有這個字,差異圖名稱會用到
+};
+function winAnsi(code) {
+  if (code >= 0x20 && code <= 0x7E) return code;
+  if (code >= 0xA0 && code <= 0xFF) return code;
+  if (WIN_EXTRA[code] !== undefined) return WIN_EXTRA[code];
+  return -1;
+}
+function canEncode(s) {
+  s = String(s);
+  for (var i = 0; i < s.length; i++) if (winAnsi(s.charCodeAt(i)) < 0) return false;
+  return true;
+}
+/* 無法編碼的字元換成 '?' 而不是靜靜刪掉:報表上看得出「這裡有東西沒印出來」,
+ * 比一個看似完整卻少字的檔名安全。 */
+function pdfString(s) {
+  var out = '(', i, b, ch;
+  s = String(s);
+  for (i = 0; i < s.length; i++) {
+    b = winAnsi(s.charCodeAt(i));
+    if (b < 0) b = 0x3F;
+    ch = String.fromCharCode(b);
+    if (ch === '(' || ch === ')' || ch === '\\') out += '\\' + ch;
+    else if (b < 32) out += '\\' + ('00' + b.toString(8)).slice(-3);
+    else out += ch;
+  }
+  return out + ')';
+}
+function n(v) {
+  if (!isFinite(v)) v = 0;
+  v = Math.round(v * 100) / 100;
+  return String(v);
+}
+function latin1Bytes(s) {
+  var u = new Uint8Array(s.length);
+  for (var i = 0; i < s.length; i++) u[i] = s.charCodeAt(i) & 0xff;
+  return u;
+}
+
+/* 字寬量測:用 canvas 量 Helvetica/Arial。兩者字寬表相同,拿來置中/靠右對齊足夠精準,
+ * 不必為此塞一份 AFM 字寬表進來。 */
+var measCtx = null;
+function measure(s, size, bold) {
+  s = String(s);
+  if (typeof document === 'undefined' || !document.createElement) return s.length * size * 0.5;
+  if (!measCtx) measCtx = document.createElement('canvas').getContext('2d');
+  measCtx.font = (bold ? 'bold ' : '') + size + 'px Helvetica, Arial, sans-serif';
+  return measCtx.measureText(s).width;
+}
+
+/* ---- 頁面 ---- */
+function Page(doc, w, h) {
+  this.doc = doc; this.width = w; this.height = h;
+  this.ops = []; this.xobj = {};
+}
+Page.prototype.text = function (s, x, y, o) {
+  if (s === undefined || s === null || s === '') return;
+  o = o || {};
+  s = String(s);
+  var size = o.size || 9, bold = !!o.bold, c = o.color || [0, 0, 0];
+  if (o.align === 'center') x -= measure(s, size, bold) / 2;
+  else if (o.align === 'right') x -= measure(s, size, bold);
+  this.ops.push(n(c[0]) + ' ' + n(c[1]) + ' ' + n(c[2]) + ' rg');
+  this.ops.push('BT /' + (bold ? 'F2' : 'F1') + ' ' + n(size) + ' Tf 1 0 0 1 ' +
+                n(x) + ' ' + n(this.height - y) + ' Tm ' + pdfString(s) + ' Tj ET');
+};
+Page.prototype.textWidth = function (s, size, bold) { return measure(s, size || 9, !!bold); };
+Page.prototype.rect = function (x, y, w, h, o) {
+  o = o || {};
+  var box = n(x) + ' ' + n(this.height - y - h) + ' ' + n(w) + ' ' + n(h) + ' re';
+  if (o.fill) this.ops.push(n(o.fill[0]) + ' ' + n(o.fill[1]) + ' ' + n(o.fill[2]) + ' rg ' + box + ' f');
+  if (o.stroke) this.ops.push(n(o.stroke[0]) + ' ' + n(o.stroke[1]) + ' ' + n(o.stroke[2]) +
+    ' RG ' + n(o.lineWidth || 0.5) + ' w ' + box + ' S');
+};
+Page.prototype.line = function (x1, y1, x2, y2, o) {
+  o = o || {};
+  var c = o.color || [0, 0, 0];
+  this.ops.push(n(c[0]) + ' ' + n(c[1]) + ' ' + n(c[2]) + ' RG ' + n(o.lineWidth || 0.5) + ' w ' +
+    n(x1) + ' ' + n(this.height - y1) + ' m ' + n(x2) + ' ' + n(this.height - y2) + ' l S');
+};
+Page.prototype.image = function (img, x, y, w, h) {
+  if (!img) return;
+  var name = 'Im' + img.id;
+  this.xobj[name] = img;
+  this.ops.push('q ' + n(w) + ' 0 0 ' + n(h) + ' ' + n(x) + ' ' + n(this.height - y - h) +
+                ' cm /' + name + ' Do Q');
+};
+
+/* ---- 文件 ---- */
+function PDFDoc(opts) {
+  opts = opts || {};
+  this.pageWidth = opts.width || 595.28;   // A4 直式(pt)
+  this.pageHeight = opts.height || 841.89;
+  this.title = opts.title || '';
+  this.pages = [];
+  this.images = [];
+}
+PDFDoc.prototype.addPage = function () {
+  var p = new Page(this, this.pageWidth, this.pageHeight);
+  this.pages.push(p);
+  return p;
+};
+PDFDoc.prototype.jpeg = function (bytes, w, h) {
+  var img = { id: this.images.length + 1, kind: 'jpeg', bytes: bytes, w: w, h: h };
+  this.images.push(img);
+  return img;
+};
+/* rgb: 每點 3 bytes,列優先。有 pako 就壓縮(通常小 10 倍以上),沒有就原樣塞。 */
+PDFDoc.prototype.rgb = function (bytes, w, h) {
+  var deflated = null;
+  if (global.pako && global.pako.deflate) {
+    try { deflated = global.pako.deflate(bytes); } catch (e) { deflated = null; }
+  }
+  var img = {
+    id: this.images.length + 1, kind: 'rgb', w: w, h: h,
+    bytes: deflated || bytes, flate: !!deflated
+  };
+  this.images.push(img);
+  return img;
+};
+
+function pdfDate(d) {
+  function p2(v) { return (v < 10 ? '0' : '') + v; }
+  var off = -d.getTimezoneOffset(), sign = off >= 0 ? '+' : '-';
+  off = Math.abs(off);
+  return 'D:' + d.getFullYear() + p2(d.getMonth() + 1) + p2(d.getDate()) +
+         p2(d.getHours()) + p2(d.getMinutes()) + p2(d.getSeconds()) +
+         sign + p2(Math.floor(off / 60)) + "'" + p2(off % 60) + "'";
+}
+
+PDFDoc.prototype.build = function () {
+  var self = this;
+  var objs = {};          // id -> Uint8Array(不含 "id 0 obj" 包裝)
+  var nextId = 5;         // 1 catalog / 2 pages / 3 F1 / 4 F2
+  function alloc() { return nextId++; }
+  function put(id, head, stream, streamIsBytes) {
+    var parts = [latin1Bytes(head)];
+    if (stream !== undefined && stream !== null) {
+      parts.push(latin1Bytes('\nstream\n'));
+      parts.push(streamIsBytes ? stream : latin1Bytes(stream));
+      parts.push(latin1Bytes('\nendstream'));
+    }
+    objs[id] = parts;
+  }
+
+  var i, j;
+  for (i = 0; i < this.images.length; i++) {
+    var im = this.images[i];
+    im.objId = alloc();
+    var head;
+    if (im.kind === 'jpeg') {
+      head = '<< /Type /XObject /Subtype /Image /Width ' + im.w + ' /Height ' + im.h +
+             ' /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ' +
+             im.bytes.length + ' >>';
+    } else {
+      head = '<< /Type /XObject /Subtype /Image /Width ' + im.w + ' /Height ' + im.h +
+             ' /ColorSpace /DeviceRGB /BitsPerComponent 8' +
+             (im.flate ? ' /Filter /FlateDecode' : '') + ' /Length ' + im.bytes.length + ' >>';
+    }
+    put(im.objId, head, im.bytes, true);
+  }
+
+  var kids = [];
+  for (i = 0; i < this.pages.length; i++) {
+    var pg = this.pages[i];
+    var pageId = alloc(), contentId = alloc();
+    kids.push(pageId + ' 0 R');
+
+    var res = '<< /Font << /F1 3 0 R /F2 4 0 R >>';
+    var names = [];
+    for (var k in pg.xobj) if (pg.xobj.hasOwnProperty(k)) names.push(k);
+    if (names.length) {
+      res += ' /XObject <<';
+      for (j = 0; j < names.length; j++) res += ' /' + names[j] + ' ' + pg.xobj[names[j]].objId + ' 0 R';
+      res += ' >>';
+    }
+    res += ' >>';
+
+    put(pageId, '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ' + n(pg.width) + ' ' + n(pg.height) +
+      '] /Resources ' + res + ' /Contents ' + contentId + ' 0 R >>');
+
+    var content = pg.ops.join('\n');
+    var cbytes = latin1Bytes(content), flate = false;
+    if (global.pako && global.pako.deflate) {
+      try { cbytes = global.pako.deflate(cbytes); flate = true; } catch (e) { flate = false; }
+    }
+    put(contentId, '<< /Length ' + cbytes.length + (flate ? ' /Filter /FlateDecode' : '') + ' >>',
+        cbytes, true);
+  }
+
+  var infoId = alloc();
+  put(1, '<< /Type /Catalog /Pages 2 0 R >>');
+  put(2, '<< /Type /Pages /Kids [' + kids.join(' ') + '] /Count ' + this.pages.length + ' >>');
+  put(3, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>');
+  put(4, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>');
+  put(infoId, '<< /Title ' + pdfString(self.title) + ' /Producer ' + pdfString('wafer-3d-viewer') +
+    ' /CreationDate ' + pdfString(pdfDate(new Date())) + ' >>');
+
+  /* 組檔:物件依編號順序寫出,同時記下每個物件的位元組偏移量給 xref 用 */
+  var chunks = [], offset = 0, offsets = [];
+  function push(u8) { chunks.push(u8); offset += u8.length; }
+  push(latin1Bytes('%PDF-1.4\n'));
+  push(new Uint8Array([0x25, 0xE2, 0xE3, 0xCF, 0xD3, 0x0A])); // 二進位註解:告訴工具這不是純文字檔
+  var total = nextId - 1;
+  for (i = 1; i <= total; i++) {
+    offsets[i] = offset;
+    push(latin1Bytes(i + ' 0 obj\n'));
+    var parts = objs[i];
+    for (j = 0; j < parts.length; j++) push(parts[j]);
+    push(latin1Bytes('\nendobj\n'));
+  }
+  var xrefAt = offset;
+  var xref = 'xref\n0 ' + (total + 1) + '\n0000000000 65535 f \n';
+  for (i = 1; i <= total; i++) xref += ('0000000000' + offsets[i]).slice(-10) + ' 00000 n \n';
+  push(latin1Bytes(xref));
+  push(latin1Bytes('trailer\n<< /Size ' + (total + 1) + ' /Root 1 0 R /Info ' + infoId +
+    ' 0 R >>\nstartxref\n' + xrefAt + '\n%%EOF\n'));
+
+  var out = new Uint8Array(offset), at = 0;
+  for (i = 0; i < chunks.length; i++) { out.set(chunks[i], at); at += chunks[i].length; }
+  return out;
+};
+
+/* canvas.toDataURL(...) → 位元組 */
+function dataURLToBytes(url) {
+  var comma = url.indexOf(',');
+  if (comma < 0) throw new Error('不是 data URL');
+  var bin = atob(url.slice(comma + 1));
+  var u = new Uint8Array(bin.length);
+  for (var i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+  return u;
+}
+
+PDFDoc.canEncode = canEncode;
+PDFDoc.measure = measure;
+PDFDoc.dataURLToBytes = dataURLToBytes;
+global.PDFDoc = PDFDoc;
+
+})(typeof window !== 'undefined' ? window : this);
+
+</script>
+<script>
+/* ============ 晶圓量測 PDF 報表 ============
+ * 產生兩種頁面:
+ *   1. 總覽頁(多片一起看)—— 每片一張 3D 曲面縮圖 + Bow / Warp,一頁最多 6 片。
+ *   2. 明細頁(每片一頁)—— 量測條件、統計值、2D 俯視圖、直方圖、大張 3D 曲面。
+ *
+ * 報表文字一律英數:PDF 內建字型只有 Helvetica 這類西文字型,要印中文就得內嵌
+ * 一份數 MB 的 CJK 字型,與「單一離線 HTML」互斥。使用者自己取的名字(檔名、
+ * Lot)若含中文,改用 canvas 畫成圖片貼上去,不會變成一排問號。
+ *
+ * 尺規誠實原則(與 viewer 的共用色階同一套):所有面板共用同一把尺時才可以互相比較,
+ * 各自 normalize 的情況必須在頁面上寫清楚,不能只靠讀者自己看座標軸小字。
+ */
+(function (global) {
+'use strict';
+
+var PW = 595.28, PH = 841.89;   // A4 直式(pt)
+var M = 34;                     // 頁邊界
+var GRAY = [0.42, 0.46, 0.52], INK = [0.09, 0.11, 0.14];
+var ACCENT = [0.62, 0.12, 0.12], LINE = [0.80, 0.83, 0.87];
+
+/* ---------- 數值工具 ---------- */
+function fmt(v, d) {
+  if (v === null || v === undefined || !isFinite(v)) return '-';
+  d = d === undefined ? 3 : d;
+  var a = Math.abs(v);
+  if (a !== 0 && (a < 1e-3 || a >= 1e6)) return v.toExponential(2);
+  var s = v.toFixed(d);
+  if (s.indexOf('.') >= 0) s = s.replace(/0+$/, '').replace(/\.$/, '');
+  return s;
+}
+function solve3(A, B) {
+  var m = [[A[0][0], A[0][1], A[0][2], B[0]],
+           [A[1][0], A[1][1], A[1][2], B[1]],
+           [A[2][0], A[2][1], A[2][2], B[2]]];
+  for (var c = 0; c < 3; c++) {
+    var piv = c;
+    for (var r = c + 1; r < 3; r++) if (Math.abs(m[r][c]) > Math.abs(m[piv][c])) piv = r;
+    if (Math.abs(m[piv][c]) < 1e-12) return null;
+    var t = m[c]; m[c] = m[piv]; m[piv] = t;
+    for (r = c + 1; r < 3; r++) {
+      var f = m[r][c] / m[c][c];
+      for (var k = c; k < 4; k++) m[r][k] -= f * m[c][k];
+    }
+  }
+  var x = [0, 0, 0];
+  for (var i = 2; i >= 0; i--) {
+    var s = m[i][3];
+    for (var j = i + 1; j < 3; j++) s -= m[i][j] * x[j];
+    x[i] = s / m[i][i];
+  }
+  return x;
+}
+
+/* Bow / Warp。參考面用「所有有效點的最小平方平面」,而不是 SEMI 定義的三點圓周法:
+ * 手上只有一張自由狀態的形貌圖,沒有夾持條件與晶圓實際邊界資訊,三點法會被那三點
+ * 附近的雜訊完全牽著走。用哪一種必須印在報表上,否則兩台機台的數字沒得比。
+ *   Bow  = 晶圓中心相對參考面的偏差(有正負;正 = 中心高於參考面)
+ *   Warp = 參考面偏差的最大值 − 最小值(恆正)
+ * x、y 用格點座標即可:同時線性縮放 x、y 不會改變殘差,換成 mm 得到的數字完全一樣。
+ */
+function waferStats(vals, w, h) {
+  var cx = (w - 1) / 2, cy = (h - 1) / 2;
+  var n = 0, sum = 0, sum2 = 0, mn = Infinity, mx = -Infinity;
+  var sx = 0, sy = 0, sz = 0, sxx = 0, sxy = 0, syy = 0, sxz = 0, syz = 0;
+  var x, y, v, px, py;
+  for (y = 0; y < h; y++) for (x = 0; x < w; x++) {
+    v = vals[y * w + x];
+    if (v !== v) continue;
+    px = x - cx; py = y - cy;
+    n++; sum += v; sum2 += v * v;
+    if (v < mn) mn = v;
+    if (v > mx) mx = v;
+    sx += px; sy += py; sz += v;
+    sxx += px * px; sxy += px * py; syy += py * py;
+    sxz += px * v; syz += py * v;
+  }
+  if (!n) return null;
+  var mean = sum / n;
+  var varr = Math.max(0, sum2 / n - mean * mean);
+  var pl = solve3([[sxx, sxy, sx], [sxy, syy, sy], [sx, sy, n]], [sxz, syz, sz]) || [0, 0, mean];
+
+  var rmn = Infinity, rmx = -Infinity, cSum = 0, cN = 0, ring = 0;
+  for (y = 0; y < h; y++) for (x = 0; x < w; x++) {
+    v = vals[y * w + x];
+    if (v !== v) continue;
+    px = x - cx; py = y - cy;
+    var r = v - (pl[0] * px + pl[1] * py + pl[2]);
+    if (r < rmn) rmn = r;
+    if (r > rmx) rmx = r;
+    if (Math.abs(px) <= 1 && Math.abs(py) <= 1) { cSum += r; cN++; }
+  }
+  // 中心沒量到就往外找一圈,再找不到就承認 Bow 無法計算,不拿別的點冒充中心
+  for (ring = 2; !cN && ring <= 4; ring++) {
+    for (y = 0; y < h; y++) for (x = 0; x < w; x++) {
+      v = vals[y * w + x];
+      if (v !== v) continue;
+      px = x - cx; py = y - cy;
+      if (Math.abs(px) <= ring && Math.abs(py) <= ring) {
+        cSum += v - (pl[0] * px + pl[1] * py + pl[2]); cN++;
+      }
+    }
+  }
+  return {
+    n: n, min: mn, max: mx, mean: mean, std: Math.sqrt(varr),
+    bow: cN ? cSum / cN : null, bowRing: cN ? ring - 1 : 0,
+    warp: rmx - rmn, plane: pl
+  };
+}
+/* 樣本的真實值陣列(遮罩點為 NaN)。明細統計優先用載入時算好的全解析度版本。 */
+function realValues(env, s) {
+  var out = new Float32Array(s.meta.w * s.meta.h);
+  for (var i = 0; i < out.length; i++) out[i] = env.realAt(s, i);
+  return out;
+}
+function statsOf(env, s) {
+  if (!s.meta.stats) s.meta.stats = waferStats(realValues(env, s), s.meta.w, s.meta.h);
+  return s.meta.stats;
+}
+/* 色階裁切:去掉兩端各 p 比例的極端值,只影響「顏色與高度怎麼映射」,不影響統計數字。
+ * 有幾顆量測突波時,不裁切的話整片會被壓成同一個顏色。裁切比例必須印在圖旁邊。 */
+function clipRange(vals, p) {
+  var v = [], i;
+  for (i = 0; i < vals.length; i++) if (vals[i] === vals[i]) v.push(vals[i]);
+  if (!v.length) return null;
+  v.sort(function (a, b) { return a - b; });
+  var lo = Math.min(v.length - 1, Math.floor(p * (v.length - 1)));
+  var hi = Math.max(0, Math.ceil((1 - p) * (v.length - 1)));
+  var a = v[lo], b = v[hi];
+  if (!(b > a)) { a = v[0]; b = v[v.length - 1]; }
+  if (!(b > a)) b = a + 1;
+  return { min: a, max: b };
+}
+
+/* ---------- 3D 曲面(離屏 WebGL) ---------- */
+var glr = null;
+function renderer(W, H) {
+  var THREE = global.THREE;
+  if (!glr) {
+    glr = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true, alpha: false });
+    glr.setPixelRatio(1);
+  }
+  glr.setSize(W, H, false);
+  return glr;
+}
+function disposeRenderer() {
+  if (!glr) return;
+  try { glr.forceContextLoss(); } catch (e) {}
+  try { glr.dispose(); } catch (e) {}
+  glr = null;
+}
+var VIEW_DIR = [70, 58, 96];        // 與檢視器預設視角同方向,報表看到的就是螢幕上那個角度
+var FOOT = 100, FOV = 40;           // 網格最長邊固定 100 單位(buildMesh 的約定)
+var PANE = 1.14;                    // 地板比晶圓大一點,才看得出「浮在平面上」
+var FIT_R = 0.55;                   // 取景用的外接圓半徑(相對 FOOT):晶圓半徑 0.5 再留一點邊
+
+/* 相機只跟版面尺寸與 Z 倍率有關,與是哪一片無關 —— 面板之間要能互相比較,
+ * 視角就不能各自 fit,否則一片翹曲 60 µm 和一片翹 5 µm 會被畫成一樣大。
+ * 距離用「投影後量一次、再依比例推回去」迭代求得,長寬比不同的版面都能填滿。 */
+function makeCamera(W, H, heightUnits) {
+  var THREE = global.THREE;
+  var cam = new THREE.PerspectiveCamera(FOV, W / H, 1, 6000);
+  var cy = heightUnits / 2;
+  var L = Math.sqrt(VIEW_DIR[0] * VIEW_DIR[0] + VIEW_DIR[1] * VIEW_DIR[1] + VIEW_DIR[2] * VIEW_DIR[2]);
+  var pts = [], a, i;
+  for (i = 0; i < 24; i++) {          // 晶圓外緣一圈,上下各一份
+    a = i / 24 * Math.PI * 2;
+    pts.push([Math.cos(a) * FOOT * FIT_R, 0, Math.sin(a) * FOOT * FIT_R]);
+    pts.push([Math.cos(a) * FOOT * FIT_R, heightUnits, Math.sin(a) * FOOT * FIT_R]);
+  }
+  var dist = FOOT * 2, v = new THREE.Vector3();
+  for (var it = 0; it < 5; it++) {
+    cam.position.set(VIEW_DIR[0] / L * dist, cy + VIEW_DIR[1] / L * dist, VIEW_DIR[2] / L * dist);
+    cam.lookAt(0, cy, 0);
+    cam.updateMatrixWorld();
+    cam.updateProjectionMatrix();
+    var mxu = 0, mxv = 0;
+    for (i = 0; i < pts.length; i++) {
+      v.set(pts[i][0], pts[i][1], pts[i][2]).project(cam);
+      if (Math.abs(v.x) > mxu) mxu = Math.abs(v.x);
+      if (Math.abs(v.y) > mxv) mxv = Math.abs(v.y);
+    }
+    var f = Math.max(mxu, mxv) / 0.93;
+    if (!isFinite(f) || f <= 0) break;
+    dist *= f;                        // 投影大小約與距離成反比,兩三輪就收斂
+    if (Math.abs(f - 1) < 0.005) break;
+  }
+  return cam;
+}
+function surfaceImage(env, doc, sample, scale, W, H) {
+  var THREE = global.THREE;
+  var r = renderer(W, H);
+  var scene = new THREE.Scene();
+  scene.background = new THREE.Color(0xffffff);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0xc4ccd6, 1.0));
+  var sun = new THREE.DirectionalLight(0xffffff, 0.8);
+  sun.position.set(90, 165, 70);
+  scene.add(sun);
+
+  var pane = new THREE.Mesh(
+    new THREE.PlaneGeometry(FOOT * PANE, FOOT * PANE),
+    new THREE.MeshBasicMaterial({ color: 0xeef1f5, side: THREE.DoubleSide })
+  );
+  pane.rotation.x = -Math.PI / 2;
+  pane.position.y = -0.8;
+  scene.add(pane);
+  var grid = new THREE.GridHelper(FOOT * PANE, 8, 0xc8cfd8, 0xdde2e9);
+  grid.position.y = -0.75;
+  scene.add(grid);
+
+  var mesh = env.buildMesh(sample, env.invert, scale);
+  mesh.scale.y = env.zScale;
+  scene.add(mesh);
+
+  var cam = makeCamera(W, H, env.heightUnits * env.zScale);
+  r.render(scene, cam);
+  var url = r.domElement.toDataURL('image/jpeg', 0.9);
+
+  mesh.geometry.dispose();
+  mesh.material.dispose();
+  pane.geometry.dispose();
+  pane.material.dispose();
+
+  // 座標軸標籤要畫在 PDF 上(向量字比較清楚),先把 3D 位置投影成面板內的相對座標
+  /* 座標軸畫在 PDF 上(向量字比較清楚),位置由 3D 投影決定。
+   * 取樣點都放在相機取景用的那一圈(半徑 FIT_R)上,否則會投影到畫面外面去。 */
+  function project(x, y, z) {
+    var v = new THREE.Vector3(x, y, z).project(cam);
+    return { u: Math.min(0.99, Math.max(0.01, (v.x + 1) / 2)),
+             t: Math.min(0.99, Math.max(0.01, (1 - v.y) / 2)) };
+  }
+  var R = FOOT * FIT_R, D = R * 0.707;
+  /* 高度軸放在畫面最左邊那個角(-x/+z):那一側沒有晶圓擋著。畫出來是為了讓
+   * 「曲面上方那段空白」有意義 —— 共用色階時,平坦的那片本來就只佔尺上一小段。 */
+  var zt = [], i;
+  for (i = 0; i <= 4; i++)
+    zt.push({ frac: i / 4, p: project(-D, i / 4 * env.heightUnits * env.zScale, D) });
+  return {
+    img: doc.jpeg(global.PDFDoc.dataURLToBytes(url), W, H),
+    // 兩條「靠近鏡頭」的邊:相機在 +x/+z 側,所以取 z=+R 與 x=+R 兩邊的中點,
+    // 標籤才不會被晶圓本體擋住(放到遠側的 -x 邊會直接壓在曲面上)
+    xLabel: project(0, 0, R),
+    yLabel: project(R, 0, 0),
+    zTicks: zt
+  };
+}
+
+/* ---------- 2D 俯視圖 ---------- */
+function mapImage(env, doc, sample, scale, px) {
+  var w = sample.meta.w, h = sample.meta.h, i;
+  var small = document.createElement('canvas');
+  small.width = w; small.height = h;
+  var sctx = small.getContext('2d');
+  var id = sctx.createImageData(w, h), d = id.data;
+  var span = scale.max - scale.min;
+  if (Math.abs(span) < 1e-12) span = 1;
+  for (i = 0; i < w * h; i++) {
+    var v = env.realAt(sample, i);
+    if (v !== v) { d[i * 4] = d[i * 4 + 1] = d[i * 4 + 2] = 255; d[i * 4 + 3] = 255; continue; }
+    var t = (v - scale.min) / span;
+    if (t < 0) t = 0; else if (t > 1) t = 1;
+    if (env.invert) t = 1 - t;
+    var c = env.viridis(t);
+    d[i * 4] = c[0]; d[i * 4 + 1] = c[1]; d[i * 4 + 2] = c[2]; d[i * 4 + 3] = 255;
+  }
+  sctx.putImageData(id, 0, 0);
+
+  var maxDim = Math.max(w, h);
+  var bw = Math.max(8, Math.round(px * w / maxDim)), bh = Math.max(8, Math.round(px * h / maxDim));
+  var big = document.createElement('canvas');
+  big.width = bw; big.height = bh;
+  var bctx = big.getContext('2d');
+  bctx.fillStyle = '#fff';
+  bctx.fillRect(0, 0, bw, bh);
+  bctx.imageSmoothingEnabled = true;
+  bctx.drawImage(small, 0, 0, bw, bh);
+  var src = bctx.getImageData(0, 0, bw, bh).data;
+  var rgb = new Uint8Array(bw * bh * 3);
+  for (i = 0; i < bw * bh; i++) {
+    rgb[i * 3] = src[i * 4]; rgb[i * 3 + 1] = src[i * 4 + 1]; rgb[i * 3 + 2] = src[i * 4 + 2];
+  }
+  return { img: doc.rgb(rgb, bw, bh), w: bw, h: bh };
+}
+
+/* ---------- 標籤(含中文時改用圖片) ---------- */
+function label(doc, page, s, x, y, o) {
+  o = o || {};
+  s = String(s === undefined || s === null ? '' : s);
+  if (!s) return;
+  if (global.PDFDoc.canEncode(s)) { page.text(s, x, y, o); return; }
+  var size = o.size || 9, bold = !!o.bold, c = o.color || INK;
+  var K = 4;  // 4 倍解析度,列印時不會糊
+  var cv = document.createElement('canvas');
+  var ctx = cv.getContext('2d');
+  var font = (bold ? 'bold ' : '') + (size * K) + 'px "PingFang TC","Microsoft JhengHei",sans-serif';
+  ctx.font = font;
+  var wpt = ctx.measureText(s).width / K, hpt = size * 1.3;
+  cv.width = Math.max(1, Math.ceil(wpt * K));
+  cv.height = Math.max(1, Math.ceil(hpt * K));
+  ctx = cv.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, cv.width, cv.height);
+  ctx.font = font;
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = 'rgb(' + Math.round(c[0] * 255) + ',' + Math.round(c[1] * 255) + ',' +
+                  Math.round(c[2] * 255) + ')';
+  ctx.fillText(s, 0, size * K);
+  var src = ctx.getImageData(0, 0, cv.width, cv.height).data;
+  var rgb = new Uint8Array(cv.width * cv.height * 3);
+  for (var i = 0; i < cv.width * cv.height; i++) {
+    rgb[i * 3] = src[i * 4]; rgb[i * 3 + 1] = src[i * 4 + 1]; rgb[i * 3 + 2] = src[i * 4 + 2];
+  }
+  var ox = o.align === 'center' ? -wpt / 2 : (o.align === 'right' ? -wpt : 0);
+  page.image(doc.rgb(rgb, cv.width, cv.height), x + ox, y - size, wpt, hpt);
+}
+
+/* ---------- 色階條 / 直方圖(向量繪製) ---------- */
+function colorbar(env, page, x, y, w, h, scale, opt) {
+  opt = opt || {};
+  var N = 64, i, t;
+  for (i = 0; i < N; i++) {
+    t = i / (N - 1);
+    var c = env.viridis(env.invert ? 1 - t : t);
+    page.rect(x, y + h - (i + 1) * (h / N), w, h / N + 0.3,
+      { fill: [c[0] / 255, c[1] / 255, c[2] / 255] });
+  }
+  page.rect(x, y, w, h, { stroke: LINE, lineWidth: 0.4 });
+  var ticks = opt.ticks || 5, size = opt.size || 6;
+  for (i = 0; i < ticks; i++) {
+    t = i / (ticks - 1);
+    var v = scale.min + t * (scale.max - scale.min);
+    page.text(fmt(v, opt.digits === undefined ? 1 : opt.digits), x + w + 3,
+      y + h - t * h + size * 0.35, { size: size, color: GRAY });
+  }
+  if (opt.title) page.text(opt.title, x + w / 2, y - 4, { size: size, color: GRAY, align: 'center' });
+}
+function histogram(env, page, x, y, w, h, sample, scale) {
+  var BINS = 44, counts = new Array(BINS), i;
+  for (i = 0; i < BINS; i++) counts[i] = 0;
+  var span = scale.max - scale.min;
+  if (Math.abs(span) < 1e-12) span = 1;
+  var total = 0;
+  for (i = 0; i < sample.meta.w * sample.meta.h; i++) {
+    var v = env.realAt(sample, i);
+    if (v !== v) continue;
+    var b = Math.floor((v - scale.min) / span * BINS);
+    if (b < 0) b = 0; else if (b >= BINS) b = BINS - 1;
+    counts[b]++; total++;
+  }
+  var peak = 0;
+  for (i = 0; i < BINS; i++) if (counts[i] > peak) peak = counts[i];
+  if (!peak) return;
+  var bh = h / BINS;
+  for (i = 0; i < BINS; i++) {
+    if (!counts[i]) continue;
+    var bw = counts[i] / peak * w;
+    var yy = y + h - (env.invert ? BINS - 1 - i : i) * bh - bh;
+    page.rect(x + w - bw, yy, bw, Math.max(0.6, bh - 0.3), { fill: [0.36, 0.68, 0.44] });
+  }
+  page.text('n = ' + total, x + w, y + h + 8, { size: 6, color: GRAY, align: 'right' });
+}
+
+/* ---------- 樣本描述文字 ---------- */
+function ywaVal(s, key) {
+  var m = s.meta.ywa;
+  if (!m || !m[key] || !m[key].length) return '';
+  var v = [];
+  for (var i = 0; i < m[key].length; i++) if (m[key][i] !== '') v.push(m[key][i]);
+  return v.join(' x ');
+}
+function scaleNote(env, scale) {
+  var s = 'Color/height scale ' + fmt(scale.min, 2) + ' ~ ' + fmt(scale.max, 2) +
+          (scale.unit ? ' ' + scale.unit : '');
+  if (env.cutoff > 0) s += '  (clipped at ' + fmt(env.cutoff * 100, 2) + '% each end)';
+  s += '   Z-scale x' + fmt(env.zScale, 2);
+  if (env.invert) s += '   depth inverted';
+  return s;
+}
+function footer(page, pageNo, total, note) {
+  page.line(M, PH - 40, PW - M, PH - 40, { color: LINE, lineWidth: 0.4 });
+  page.text(note || '', M, PH - 29, { size: 6.5, color: GRAY });
+  page.text(pageNo + ' / ' + total, PW - M, PH - 29, { size: 6.5, color: GRAY, align: 'right' });
+}
+
+/* ---------- 總覽頁 ---------- */
+var PER_PAGE = 6, COLS = 2, ROWS = 3;
+function summaryPage(env, doc, list, startIdx, head) {
+  var page = doc.addPage();
+  label(doc, page, head.title, M, 50, { size: 15, bold: true, color: INK });
+  page.text(head.sub, M, 63, { size: 7.5, color: GRAY });
+  page.line(M, 70, PW - M, 70, { color: LINE, lineWidth: 0.6 });
+  if (head.warn) page.text(head.warn, M, 80, { size: 7.5, color: ACCENT, bold: true });
+
+  var top = head.warn ? 90 : 84, bottom = PH - 52;
+  var gapX = 16, gapY = 12;
+  // 這一頁實際有幾列就分成幾列 —— 只有兩片時不必留著第三列的空白
+  var rows = Math.min(ROWS, Math.ceil((list.length - startIdx) / COLS));
+  var cw = (PW - 2 * M - gapX) / COLS, ch = (bottom - top - gapY * (rows - 1)) / rows;
+  var barW = 9, barPad = 46;
+  var imgW = cw - barPad, imgH = Math.min(ch - 42, imgW * 0.95);
+  var px = Math.round(imgW * 2.6), py = Math.round(imgH * 2.6);
+  var pad = Math.max(0, (ch - (42 + imgH)) / 2);   // 列數少時把面板放中間,不要全靠上
+
+  for (var k = 0; k < PER_PAGE && startIdx + k < list.length; k++) {
+    var s = list[startIdx + k];
+    var cx = M + (k % COLS) * (cw + gapX), cy = top + Math.floor(k / COLS) * (ch + gapY) + pad;
+    var scale = env.scaleFor(s), st = statsOf(env, s);
+    label(doc, page, s.meta.name || 'wafer', cx, cy + 10, { size: 9.5, bold: true, color: INK });
+    page.text('Bow ' + fmt(st.bow, 2) + '   Warp ' + fmt(st.warp, 2) +
+      (scale.unit ? ' ' + scale.unit : ''), cx, cy + 21, { size: 8, color: ACCENT, bold: true });
+
+    var sur = surfaceImage(env, doc, s, scale, px, py);
+    var iy = cy + 27;
+    page.image(sur.img, cx, iy, imgW, imgH);
+    page.text('XADR', cx + sur.xLabel.u * imgW, iy + sur.xLabel.t * imgH + 3,
+      { size: 5.5, color: GRAY, align: 'center' });
+    page.text('YADR', cx + sur.yLabel.u * imgW, iy + sur.yLabel.t * imgH + 3,
+      { size: 5.5, color: GRAY, align: 'center' });
+    colorbar(env, page, cx + cw - barPad + 8, iy + 6, barW, imgH - 20, scale,
+      { size: 5.5, ticks: 4, digits: 1 });
+    page.text(s.meta.w + ' x ' + s.meta.h + ' grid   ' +
+      fmt(scale.min, 1) + ' ~ ' + fmt(scale.max, 1) + (scale.unit ? ' ' + scale.unit : ''),
+      cx, iy + imgH + 10, { size: 6.5, color: GRAY });
+  }
+  return page;
+}
+
+/* ---------- 明細頁 ---------- */
+function detailPage(env, doc, s) {
+  var page = doc.addPage();
+  var scale = env.scaleFor(s), st = statsOf(env, s);
+  var unit = scale.unit ? ' ' + scale.unit : '';
+
+  label(doc, page, 'Wafer #: ' + (s.meta.name || 'wafer'), M, 52, { size: 13, bold: true, color: INK });
+  var sub = [];
+  if (s.meta.col) sub.push('Measurement: ' + s.meta.col);
+  sub.push(s.meta.w + ' x ' + s.meta.h + ' grid');
+  if (s.meta.srcSize && (s.meta.srcSize[0] !== s.meta.w || s.meta.srcSize[1] !== s.meta.h))
+    sub.push('resampled from ' + s.meta.srcSize[0] + ' x ' + s.meta.srcSize[1]);
+  if (s.meta.source) sub.push(s.meta.source);
+  page.text(sub.join('   ·   '), M, 64, { size: 7.5, color: GRAY });
+  page.line(M, 71, PW - M, 71, { color: LINE, lineWidth: 0.6 });
+
+  /* 左欄:量測條件 + 統計 */
+  var lx = M, lw = 170, y = 90;
+  page.text('Measurement condition', lx, y, { size: 9.5, bold: true, color: INK });
+  y += 13;
+  var cond = [
+    ['Lot', ywaVal(s, 'Lot')], ['Wafer', ywaVal(s, 'Wafer')],
+    ['Chamber', ywaVal(s, 'Chamber')], ['Setup', ywaVal(s, 'Setup')],
+    ['Pitch', ywaVal(s, 'Pitch')], ['Radius', ywaVal(s, 'Radius')],
+    ['Exclusion', ywaVal(s, 'Exclusion')], ['Flat', ywaVal(s, 'Flat')],
+    ['Map resolution', s.meta.w + ' x ' + s.meta.h]
+  ];
+  for (var i = 0; i < cond.length; i++) {
+    if (!cond[i][1]) continue;
+    page.text(cond[i][0], lx, y, { size: 7.5, color: GRAY });
+    label(doc, page, cond[i][1], lx + lw, y, { size: 7.5, color: INK, align: 'right' });
+    y += 11.5;
+  }
+  y += 10;
+  page.text('Measure Result', lx, y, { size: 9.5, bold: true, color: INK });
+  y += 13;
+  var res = [
+    ['Min', fmt(st.min, 3) + unit], ['Max', fmt(st.max, 3) + unit],
+    ['Average', fmt(st.mean, 3) + unit], ['STD DEV', fmt(st.std, 3) + unit],
+    ['Range', fmt(st.max - st.min, 3) + unit],
+    ['Bow', fmt(st.bow, 3) + unit], ['Warp', fmt(st.warp, 3) + unit],
+    ['Valid points', String(st.n)],
+    ['Coverage', fmt(st.n / (s.meta.w * s.meta.h) * 100, 1) + ' %']
+  ];
+  for (i = 0; i < res.length; i++) {
+    var strong = res[i][0] === 'Bow' || res[i][0] === 'Warp';
+    page.text(res[i][0], lx, y, { size: 7.5, color: strong ? INK : GRAY, bold: strong });
+    page.text(res[i][1], lx + lw, y, { size: 7.5, color: strong ? ACCENT : INK,
+      bold: strong, align: 'right' });
+    y += 11.5;
+  }
+  if (st.bow === null)
+    page.text('Bow: wafer centre not measured', lx, y + 2, { size: 6.5, color: ACCENT });
+
+  /* 右上:2D 俯視圖 + 直方圖 + 色階條 */
+  var mx = M + 182, mtop = 88, mSize = 200;
+  var mp = mapImage(env, doc, s, scale, 640);
+  var mw = mSize, mh = mSize * mp.h / mp.w;
+  if (mh > mSize) { mh = mSize; mw = mSize * mp.w / mp.h; }
+  page.text('Map: ' + (s.meta.col || 'value') + (scale.unit ? ' (' + scale.unit + ')' : ''),
+    mx, mtop - 5, { size: 7.5, color: GRAY });
+  page.image(mp.img, mx, mtop, mw, mh);
+  page.rect(mx, mtop, mw, mh, { stroke: LINE, lineWidth: 0.4 });
+
+  var hx = mx + mw + 16, hw = 58, bx = hx + hw + 4;
+  histogram(env, page, hx, mtop, hw, mh, s, scale);
+  colorbar(env, page, bx, mtop, 10, mh, scale, { size: 6.5, ticks: 7, digits: 2 });
+
+  /* 下半:大張 3D 曲面。畫框比例刻意接近晶圓投影後的比例(約 1.35:1),
+   * 框太寬的話「上下塞滿、左右留白」,晶圓就只佔一半寬度。 */
+  var sy = Math.max(mtop + mh + 26, y + 24);
+  page.text('3D Wafer Surface', M, sy, { size: 9.5, bold: true, color: INK });
+  page.text('Bow ' + fmt(st.bow, 2) + unit + '   Warp ' + fmt(st.warp, 2) + unit,
+    M + 100, sy, { size: 8.5, bold: true, color: ACCENT });
+  page.text(scaleNote(env, scale), PW - M, sy, { size: 6.5, color: GRAY, align: 'right' });
+  sy += 8;
+  var sh = Math.min(400, Math.max(180, PH - 58 - sy)), sw = Math.min(PW - 2 * M, sh * 1.25);
+  var sx = (PW - sw) / 2;
+  var sur = surfaceImage(env, doc, s, scale, Math.round(sw * 2), Math.round(sh * 2));
+  page.image(sur.img, sx, sy, sw, sh);
+  page.text('XADR', sx + sur.xLabel.u * sw, sy + sur.xLabel.t * sh + 4,
+    { size: 7, color: GRAY, align: 'center' });
+  page.text('YADR', sx + sur.yLabel.u * sw, sy + sur.yLabel.t * sh + 4,
+    { size: 7, color: GRAY, align: 'center' });
+  // 高度軸:刻度值跟著實際採用的色階走,和右上角的色階條是同一把尺
+  var zt = sur.zTicks, span = scale.max - scale.min;
+  var x0 = sx + zt[0].p.u * sw, y0 = sy + zt[0].p.t * sh;
+  var x1 = sx + zt[zt.length - 1].p.u * sw, y1 = sy + zt[zt.length - 1].p.t * sh;
+  page.line(x0, y0, x1, y1, { color: LINE, lineWidth: 0.6 });
+  for (i = 0; i < zt.length; i++) {
+    var tx = sx + zt[i].p.u * sw, ty = sy + zt[i].p.t * sh;
+    var val = scale.min + (env.invert ? 1 - zt[i].frac : zt[i].frac) * span;
+    page.line(tx, ty, tx - 3, ty, { color: LINE, lineWidth: 0.6 });
+    page.text(fmt(val, 1), tx - 5, ty + 2, { size: 6.5, color: GRAY, align: 'right' });
+  }
+  page.text((s.meta.col || 'height') + (scale.unit ? ' (' + scale.unit + ')' : ''),
+    x1 - 5, y1 - 5, { size: 7, color: GRAY, align: 'right' });
+  return page;
+}
+
+/* ---------- 產生 ---------- */
+function pad2(v) { return (v < 10 ? '0' : '') + v; }
+function stamp(d) {
+  return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) + ' ' +
+         pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+}
+function fileStamp(d) {
+  return String(d.getFullYear()) + pad2(d.getMonth() + 1) + pad2(d.getDate()) + '-' +
+         pad2(d.getHours()) + pad2(d.getMinutes());
+}
+
+/* env:
+ *   samples[]      要輸出的樣本(值為 0~1,配 meta.min/max 還原)
+ *   scaleFor(s)    該片實際採用的色階 {min,max,unit}
+ *   comparable     所有面板是否共用同一把尺(false 時頁面上會標明不可比較)
+ *   realAt, viridis, buildMesh, heightUnits, invert, zScale, cutoff
+ *   onProgress(done,total)
+ */
+function generate(env) {
+  return new Promise(function (resolve, reject) {
+    var list = env.samples || [];
+    if (!list.length) { reject(new Error('沒有可輸出的資料')); return; }
+    var now = new Date();
+    var doc = new global.PDFDoc({ title: 'Wafer measurement report ' + stamp(now) });
+    var withSummary = list.length > 1;
+    var sumPages = withSummary ? Math.ceil(list.length / PER_PAGE) : 0;
+    var note = 'Reference plane: least-squares fit over all valid points.  ' +
+               'Bow = deviation of wafer centre;  Warp = max - min deviation.  ' +
+               'Generated by wafer-3d-viewer, ' + stamp(now) + '.';
+    var warn = env.comparable ? '' :
+      'Each panel uses its own colour/height scale - panels are NOT comparable with each other.';
+
+    var tasks = [], i;
+    for (i = 0; i < sumPages; i++) (function (pi) {
+      tasks.push(function () {
+        summaryPage(env, doc, list, pi * PER_PAGE, {
+          title: 'Wafer Bow & Warp Report',
+          sub: list.length + ' wafers   ·   ' + stamp(now) +
+               (env.comparable ? '   ·   shared colour/height scale' : '') +
+               (env.cutoff > 0 ? '   ·   scale clipped at ' + fmt(env.cutoff * 100, 2) + '% each end' : ''),
+          warn: warn
+        });
+      });
+    })(i);
+    for (i = 0; i < list.length; i++) (function (si) {
+      tasks.push(function () { detailPage(env, doc, list[si]); });
+    })(i);
+
+    var k = 0;
+    function step() {
+      try {
+        if (k >= tasks.length) {
+          for (var p = 0; p < doc.pages.length; p++) footer(doc.pages[p], p + 1, doc.pages.length, note);
+          var bytes = doc.build();
+          disposeRenderer();
+          resolve({ bytes: bytes, pages: doc.pages.length,
+                    filename: 'wafer-report-' + fileStamp(now) + '.pdf' });
+          return;
+        }
+        tasks[k++]();
+        if (env.onProgress) env.onProgress(k, tasks.length);
+        setTimeout(step, 0);   // 讓出主執行緒,手機上才不會整頁卡住
+      } catch (e) {
+        disposeRenderer();
+        reject(e);
+      }
+    }
+    setTimeout(step, 0);
+  });
+}
+
+global.WaferReport = {
+  generate: generate,
+  waferStats: waferStats,
+  clipRange: clipRange,
+  realValues: realValues,
+  fmt: fmt
+};
+
+})(typeof window !== 'undefined' ? window : this);
+
+</script>
+<script>
 'use strict';
 /* ============ 共用核心(與 sender.html 對應,協定 WD1) ============
  * raw 的語意依 header 的 v 而定:
@@ -11487,8 +12379,11 @@ function downsample(src, sw, sh, tw, th) {
   return out;
 }
 var FILE_MAX_DIM = 256; // 直接開檔時的網格上限(手機 3D 效能考量)
-function matrixToSample(res, name, unit, col) {
+function matrixToSample(res, name, unit, col, source) {
   var w = res.w, h = res.h, arr = res.arr;
+  // 統計(含 Bow / Warp)在降採樣「之前」算,報表數字才是原始量測而不是平滑過的版本
+  var stats = window.WaferReport ? window.WaferReport.waferStats(arr, w, h) : null;
+  var srcW = w, srcH = h;
   var maxDim = Math.max(w, h);
   if (maxDim > FILE_MAX_DIM) {
     var tw = Math.max(8, Math.round(FILE_MAX_DIM * w / maxDim));
@@ -11516,12 +12411,16 @@ function matrixToSample(res, name, unit, col) {
     meta: {
       w: w, h: h, min: mn, max: mx, unit: unit || '',
       name: name || '檔案資料',
-      col: col || '' // 量測欄位名(.ywa 用):判斷多樣本能否共用色階
+      col: col || '', // 量測欄位名(.ywa 用):判斷多樣本能否共用色階
+      // 以下只給 PDF 報表用,不影響 3D 顯示
+      stats: stats, srcSize: [srcW, srcH], ywa: res.ywaMeta || null, source: source || ''
     },
     values: values
   };
 }
-function showFromMatrix(res, name, unit) { show3D(matrixToSample(res, name, unit)); }
+function showFromMatrix(res, name, unit, source) {
+  show3D(matrixToSample(res, name, unit, '', source));
+}
 
 /* ============ 封包解析 ============ */
 function parsePayload(deflated) {
@@ -11926,9 +12825,10 @@ function rebuildMesh() {
   three.scene.add(three.mesh);
 }
 var statusTimer = null;
-function showStatus(msg, ms) {
+function showStatus(msg, ms, info) {
   var el = document.getElementById('status');
   el.textContent = msg || '';
+  el.className = info ? 'info' : '';
   el.style.display = msg ? 'block' : 'none';
   if (statusTimer) { clearTimeout(statusTimer); statusTimer = null; }
   if (msg && ms) statusTimer = setTimeout(function () {
@@ -11984,7 +12884,7 @@ document.getElementById('btnRescan').addEventListener('click', function () {
   startScan();
 });
 document.getElementById('btnDemo').addEventListener('click', function () {
-  showFromMatrix(demoWafer(96), '示範晶圓', 'µm');
+  showFromMatrix(demoWafer(96), 'demo-wafer', 'µm', '示範資料(非實際量測)');
 });
 document.getElementById('btnFile').addEventListener('click', function () {
   document.getElementById('fileTxt').click();
@@ -12012,9 +12912,9 @@ document.getElementById('fileTxt').addEventListener('change', function () {
         var base = f.name.replace(/\.[^.]+$/, '').slice(0, 40), txt = rd.result;
         if (isYWafer(txt)) {
           var y = parseYWafer(txt, null); // 多欄位時預設取第一個量測欄
-          out[idx] = matrixToSample(y, base + '(' + y.col + ')', '', y.col);
+          out[idx] = matrixToSample(y, base + '(' + y.col + ')', '', y.col, f.name);
         } else {
-          out[idx] = matrixToSample(parseMatrixText(txt), base, '', '');
+          out[idx] = matrixToSample(parseMatrixText(txt), base, '', '', f.name);
         }
       } catch (e) { errs.push(f.name + ' → ' + e.message); }
       finish();
@@ -12075,6 +12975,73 @@ document.addEventListener('visibilitychange', function () {
   if (!document.hidden && scanning) requestWakeLock();
 });
 
+/* ============ PDF 報表 ============
+ * 色階沿用畫面上正在用的那一套(共用 / 各自),報表頁面會把採用哪一種寫出來——
+ * 一張看起來很專業卻沒說明尺規的圖,比沒有圖更容易讓人下錯結論。
+ * 差異圖不收錄:它有自己的尺,混進以共用色階為前提的比較表只會誤導。
+ */
+function buildReportEnv() {
+  var cutoff = parseFloat(document.getElementById('pdfClip').value) / 100;
+  if (!isFinite(cutoff) || cutoff < 0) cutoff = 0;
+  var env = {
+    samples: samples.slice(),
+    realAt: realAt, viridis: viridis, buildMesh: buildMesh,
+    heightUnits: HEIGHT_UNITS,
+    invert: inverted,
+    zScale: parseFloat(document.getElementById('zScale').value) || 1,
+    cutoff: cutoff
+  };
+  var per = [], mn = Infinity, mx = -Infinity, i, r;
+  for (i = 0; i < env.samples.length; i++) {
+    r = cutoff > 0 ? WaferReport.clipRange(WaferReport.realValues(env, env.samples[i]), cutoff) : null;
+    r = r || { min: env.samples[i].meta.min, max: env.samples[i].meta.max };
+    per.push(r);
+    if (r.min < mn) mn = r.min;
+    if (r.max > mx) mx = r.max;
+  }
+  var shared = env.samples.length > 1 && sharedScale && samplesCompatible();
+  env.comparable = env.samples.length < 2 || shared;
+  env.scaleFor = function (s) {
+    var k = env.samples.indexOf(s);
+    var range = shared ? { min: mn, max: mx } : per[k < 0 ? 0 : k];
+    return { min: range.min, max: range.max, unit: s.meta.unit || '' };
+  };
+  return env;
+}
+function downloadBytes(bytes, filename, mime) {
+  var url = URL.createObjectURL(new Blob([bytes], { type: mime }));
+  var a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+}
+function exportPdf() {
+  if (!window.WaferReport || !window.PDFDoc)
+    return Promise.reject(new Error('PDF 模組未載入'));
+  if (!samples.length) return Promise.reject(new Error('沒有可輸出的資料'));
+  var env = buildReportEnv();
+  env.onProgress = function (done, total) {
+    showStatus('產生 PDF 報表… ' + done + ' / ' + total + ' 頁', 0, true);
+  };
+  showStatus('產生 PDF 報表…', 0, true);
+  return WaferReport.generate(env);
+}
+document.getElementById('btnPdf').addEventListener('click', function () {
+  var btn = this;
+  btn.disabled = true;
+  exportPdf().then(function (r) {
+    downloadBytes(r.bytes, r.filename, 'application/pdf');
+    showStatus('已產生 ' + r.pages + ' 頁 ・ ' + r.filename +
+      (diffSample ? '\n(差異圖不收錄,報表是各片原始量測)' : ''), 5000, true);
+    btn.disabled = false;
+  })['catch'](function (e) {
+    showStatus('PDF 產生失敗:' + (e && e.message ? e.message : e), 8000);
+    btn.disabled = false;
+  });
+});
+
 /* 測試掛鉤(開發驗證用) */
 window.__wv = {
   onText: onText,
@@ -12093,6 +13060,8 @@ window.__wv = {
   currentScale: currentScale,
   samplesCompatible: samplesCompatible,
   realAt: realAt,
+  exportPdf: exportPdf,
+  buildReportEnv: buildReportEnv,
   getSamples: function () { return samples; },
   setShared: function (v) { sharedScale = v; showCurrent(false); },
   setActive: function (i) { activeIdx = i; showCurrent(false); }
