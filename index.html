@@ -73,6 +73,21 @@
           border-radius:9px;padding:12px 14px;}
   #status.info{color:var(--ink);border-color:var(--accent);}
   #mInfo{white-space:pre-line;}
+  .hidden{display:none !important;}
+
+  /* 面板名牌:並排比較時直接標在各自的晶圓上方,不佔用版面高度 */
+  #panelLabels{position:absolute;inset:0;pointer-events:none;overflow:hidden;}
+  .panelLabel{position:absolute;transform:translate(-50%,-100%);white-space:nowrap;
+              font-size:11px;line-height:1.5;padding:2px 7px;border-radius:6px;
+              background:rgba(12,17,24,.82);border:1px solid var(--line);
+              font-family:Consolas,monospace;}
+  .panelLabel i{font-style:normal;display:inline-block;width:7px;height:7px;
+                border-radius:2px;margin-right:5px;vertical-align:1px;}
+
+  /* ---- 剖面圖 ---- */
+  #profBox{display:flex;flex-direction:column;gap:8px;}
+  #profChart{width:100%;height:112px;display:block;border:1px solid var(--line);
+             border-radius:8px;background:#151b25;}
 </style>
 </head>
 <body>
@@ -106,6 +121,7 @@
 
 <div id="scrView" class="screen">
   <div id="c3d"></div>
+  <div id="panelLabels"></div>
   <div id="viewTop">
     <div class="meta">
       <b id="mName">—</b><br>
@@ -122,10 +138,19 @@
       <input type="range" id="zScale" min="0.2" max="4" step="0.05" value="1">
       <label id="zVal" style="width:44px;text-align:right;font-family:Consolas,monospace;color:var(--ink);">1.0×</label>
     </div>
+    <div id="profBox" class="hidden">
+      <canvas id="profChart"></canvas>
+      <div class="row">
+        <label>剖面角度</label>
+        <input type="range" id="profAngle" min="0" max="179" step="1" value="0" style="flex:1;accent-color:var(--accent);">
+        <label id="profVal" style="width:40px;text-align:right;font-family:Consolas,monospace;color:var(--ink);">0°</label>
+      </div>
+    </div>
     <div class="row" id="sampleRow">
       <button class="small" id="btnPrev">◀</button>
       <label id="sampleLbl" style="min-width:76px;text-align:center;font-family:Consolas,monospace;color:var(--ink);">1 / 1</label>
       <button class="small" id="btnNext">▶</button>
+      <button class="small toggle on" id="btnMulti">並排</button>
       <button class="small toggle on" id="btnShared">共用色階</button>
       <button class="small toggle" id="btnDiff">差異圖</button>
     </div>
@@ -133,9 +158,11 @@
       <button class="small" id="btnReset">重設視角</button>
       <button class="small toggle" id="btnRotate">自動旋轉</button>
       <button class="small toggle" id="btnInvert">深度反轉</button>
-      <button class="small primary" id="btnRescan">📷 重新掃描</button>
+      <button class="small toggle" id="btnProfile">📈 剖面圖</button>
     </div>
     <div class="row">
+      <button class="small primary" id="btnAdd">📷 加掃一片</button>
+      <button class="small" id="btnRescan">重新掃描</button>
       <button class="small" id="btnPdf">📄 輸出 PDF 報表</button>
       <label for="pdfClip">色階裁切</label>
       <select id="pdfClip">
@@ -11586,7 +11613,8 @@ global.PDFDoc = PDFDoc;
 /* ============ 晶圓量測 PDF 報表 ============
  * 產生兩種頁面:
  *   1. 總覽頁(多片一起看)—— 每片一張 3D 曲面縮圖 + Bow / Warp,一頁最多 6 片。
- *   2. 明細頁(每片一頁)—— 量測條件、統計值、2D 俯視圖、直方圖、大張 3D 曲面。
+ *   2. 明細頁(每片一頁)—— 量測條件、統計值、2D 俯視圖、直方圖、大張 3D 曲面、
+ *      通過中心的剖面曲線。
  *
  * 報表文字一律英數:PDF 內建字型只有 Helvetica 這類西文字型,要印中文就得內嵌
  * 一份數 MB 的 CJK 字型,與「單一離線 HTML」互斥。使用者自己取的名字(檔名、
@@ -11944,6 +11972,47 @@ function histogram(env, page, x, y, w, h, sample, scale) {
   page.text('n = ' + total, x + w, y + h + 8, { size: 6, color: GRAY, align: 'right' });
 }
 
+/* ---------- 剖面圖(通過中心的直徑) ----------
+ * 用向量線畫,不是貼圖:列印時才看得出微米級的起伏。橫軸正規化成 −1 ~ +1
+ * (±1 = 沿該方向到網格邊界),縱軸與右上角的色階條、3D 的高度軸是同一把尺。
+ * env 沒有帶 profileAt 時整格跳過 —— 這個模組要能單獨測試。
+ */
+function profileChart(env, page, x, y, w, h, sample, scale) {
+  if (!env.profileAt) return false;
+  var pr = env.profileAt(sample, env.profileAngle || 0, 241);
+  var span = scale.max - scale.min;
+  if (Math.abs(span) < 1e-12) span = 1;
+
+  page.rect(x, y, w, h, { stroke: LINE, lineWidth: 0.4 });
+  var i, f, yy;
+  for (i = 0; i <= 2; i++) {
+    f = i / 2;
+    yy = y + h - f * h;
+    if (i === 1) page.line(x, yy, x + w, yy, { color: LINE, lineWidth: 0.3 });
+    page.text(fmt(scale.min + (env.invert ? 1 - f : f) * span, 1), x - 4, yy + 2,
+      { size: 6, color: GRAY, align: 'right' });
+  }
+  page.line(x + w / 2, y, x + w / 2, y + h, { color: LINE, lineWidth: 0.3 });
+  page.text('edge', x, y + h + 8, { size: 6, color: GRAY });
+  page.text('centre', x + w / 2, y + h + 8, { size: 6, color: GRAY, align: 'center' });
+  page.text('edge', x + w, y + h + 8, { size: 6, color: GRAY, align: 'right' });
+
+  /* 遮罩處斷開,不跨過去連一條直線 —— 那條線會看起來像量到的資料。
+   * 超出色階範圍的點直接略過,不夾在框線上假裝成一段平台。 */
+  var px = null, py = null, drawn = 0;
+  for (i = 0; i < pr.n; i++) {
+    var r = pr.v[i];
+    if (r !== r) { px = null; continue; }
+    var t = (r - scale.min) / span;
+    if (t < 0 || t > 1) { px = null; continue; }
+    if (env.invert) t = 1 - t;
+    var cx = x + (i / (pr.n - 1)) * w, cy = y + h - t * h;
+    if (px !== null) { page.line(px, py, cx, cy, { color: [0.20, 0.45, 0.78], lineWidth: 0.8 }); drawn++; }
+    px = cx; py = cy;
+  }
+  return drawn > 0;
+}
+
 /* ---------- 樣本描述文字 ---------- */
 function ywaVal(s, key) {
   var m = s.meta.ywa;
@@ -12010,6 +12079,7 @@ function summaryPage(env, doc, list, startIdx, head) {
 }
 
 /* ---------- 明細頁 ---------- */
+var PROF_H = 66, PROF_GAP = 22;
 function detailPage(env, doc, s) {
   var page = doc.addPage();
   var scale = env.scaleFor(s), st = statsOf(env, s);
@@ -12085,7 +12155,10 @@ function detailPage(env, doc, s) {
     M + 100, sy, { size: 8.5, bold: true, color: ACCENT });
   page.text(scaleNote(env, scale), PW - M, sy, { size: 6.5, color: GRAY, align: 'right' });
   sy += 8;
-  var sh = Math.min(400, Math.max(180, PH - 58 - sy)), sw = Math.min(PW - 2 * M, sh * 1.25);
+  var hasProf = !!env.profileAt;
+  var reserve = hasProf ? PROF_H + PROF_GAP : 0;
+  var sh = Math.min(400, Math.max(150, PH - 58 - sy - reserve));
+  var sw = Math.min(PW - 2 * M, sh * 1.25);
   var sx = (PW - sw) / 2;
   var sur = surfaceImage(env, doc, s, scale, Math.round(sw * 2), Math.round(sh * 2));
   page.image(sur.img, sx, sy, sw, sh);
@@ -12106,6 +12179,16 @@ function detailPage(env, doc, s) {
   }
   page.text((s.meta.col || 'height') + (scale.unit ? ' (' + scale.unit + ')' : ''),
     x1 - 5, y1 - 5, { size: 7, color: GRAY, align: 'right' });
+
+  /* 剖面:3D 看得出「這裡凹下去」,看不出凹多少。角度要印出來,換一個角度就是另一條線。 */
+  if (hasProf) {
+    var py0 = sy + sh + PROF_GAP;
+    page.text('Cross-section through centre', M, py0 - 5, { size: 9.5, bold: true, color: INK });
+    page.text(fmt(env.profileAngle || 0, 0) + ' deg from XADR axis   ·   ' +
+      'position normalised to grid edge   ·   same scale as above',
+      M + 152, py0 - 5, { size: 6.5, color: GRAY });
+    profileChart(env, page, M + 30, py0, PW - 2 * M - 30, PROF_H, s, scale);
+  }
   return page;
 }
 
@@ -12494,7 +12577,10 @@ function finishTransfer() {
   decoded = data;
   if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
   stopScan();
-  show3D(data);
+  // 「加掃一片」是接在既有樣本後面,不是取代 —— 掃第二片時第一片還在畫面上
+  if (appendOnScan && samples.length && samples.length < MAX_SAMPLES) addSample(data);
+  else show3D(data);
+  appendOnScan = false;
 }
 
 /* ============ 掃描進度 UI ============ */
@@ -12516,6 +12602,7 @@ function updateProgress(idx) {
 /* ============ 相機與解碼 ============ */
 var stream = null, scanning = false, starting = false, lastDecode = 0, bdBusy = false;
 var barcodeDetector = null, wakeLock = null;
+var appendOnScan = false;   // true = 掃完接在既有樣本後面(加掃),false = 取代整組
 
 function switchScreen(id) {
   var scr = document.querySelectorAll('.screen');
@@ -12535,9 +12622,10 @@ function requestWakeLock() {
   }
 }
 
-function startScan() {
+function startScan(append) {
   if (starting || scanning) return; // 防止重複點擊造成多重相機工作階段
   starting = true;
+  appendOnScan = !!append && samples.length > 0 && samples.length < MAX_SAMPLES;
   var err = document.getElementById('homeErr');
   err.textContent = '';
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -12556,7 +12644,8 @@ function startScan() {
   }).then(function (bd) {
     barcodeDetector = bd;
     resetStore();
-    setProgText('等待第一個 QR…');
+    setProgText(appendOnScan ? '加掃第 ' + (samples.length + 1) + ' 片 ・ 等待第一個 QR…'
+                             : '等待第一個 QR…');
     document.getElementById('progFill').style.width = '0%';
     document.getElementById('dots').innerHTML = '';
     switchScreen('scrScan');
@@ -12566,6 +12655,7 @@ function startScan() {
     requestAnimationFrame(tick);
   }).catch(function (e) {
     starting = false;
+    appendOnScan = false;
     var m = '無法開啟相機:' + (e && e.name ? e.name : e);
     if (e && e.name === 'NotAllowedError') m = '相機權限被拒絕。請到瀏覽器設定允許本頁使用相機。';
     if (e && e.name === 'NotFoundError') m = '找不到相機裝置。';
@@ -12630,10 +12720,38 @@ function processImageData(img) {
 }
 
 /* ============ 3D 顯示 ============ */
-var three = null;      // {renderer,scene,camera,controls,mesh}
-var viewData = null;   // 目前顯示的資料(= 差異圖,或 samples[activeIdx])
+var three = null;      // {renderer,scene,camera,controls,panels[]}
+var viewData = null;   // 目前的主要樣本(= 差異圖,或 samples[activeIdx])
 var inverted = false;
 var HEIGHT_UNITS = 22;
+
+/* ---- 並排比較 ----
+ * 上限 4:再多下去每片在手機上就小到看不出起伏,而且 4 片同時渲染是行動 GPU
+ * 還撐得住的範圍。各面板共用同一個場景與相機 —— 視角一致是能不能互相比較的前提,
+ * 分成四個獨立畫布反而要自己同步相機,而且要開四個 WebGL context。
+ */
+var MAX_SAMPLES = 4;
+var PANEL_COLORS = ['#3d9bff', '#ffb63d', '#31c47c', '#ff7a9c'];
+var PANEL_GAP = 118;   // 面板中心間距(buildMesh 的網格最長邊固定 100 單位)
+var multiView = false;
+var viewStart = 0;     // 樣本超過 4 片時,並排視窗的起點
+
+function panelSlots(n) {
+  var g = PANEL_GAP / 2;
+  if (n <= 1) return [[0, 0]];
+  if (n === 2) return [[-g, 0], [g, 0]];
+  if (n === 3) return [[-g, -g], [g, -g], [0, g]];
+  return [[-g, -g], [g, -g], [-g, g], [g, g]];
+}
+/* 並排的前提是所有面板共用同一把尺;量測種類不同時共用色階沒有意義,
+ * 那就不該並排 —— 兩張用不同尺畫出來的圖放在一起,只會讓人直接比錯。 */
+function canMulti() { return samples.length > 1 && samplesCompatible(); }
+function displayedSamples() {
+  if (diffSample) return [diffSample];
+  if (!samples.length) return [];
+  if (multiView && samples.length > 1) return samples.slice(viewStart, viewStart + MAX_SAMPLES);
+  return [samples[activeIdx]];
+}
 
 /* ---- 多樣本比較狀態 ----
  * samples[i].values 是「相對於該樣本自己 min/max」的 0~1 值,NaN 代表遮罩(圓外)。
@@ -12666,8 +12784,9 @@ function samplesCompatible() {
 function currentScale() {
   var s = currentSample();
   if (!s) return { min: 0, max: 1, unit: '' };
-  // 差異圖有自己的尺;單片、關掉共用、或量測種類不同時都用各自的
-  if (diffSample || !sharedScale || samples.length < 2 || !samplesCompatible())
+  // 差異圖有自己的尺;單片、關掉共用、或量測種類不同時都用各自的。
+  // 並排時強制共用:所有面板只吃得到一把尺,各自 normalize 的並排圖就是騙人的。
+  if (diffSample || samples.length < 2 || !samplesCompatible() || !(sharedScale || multiView))
     return { min: s.meta.min, max: s.meta.max, unit: s.meta.unit || '' };
   var mn = Infinity, mx = -Infinity;
   for (var i = 0; i < samples.length; i++) {
@@ -12676,7 +12795,7 @@ function currentScale() {
   }
   return { min: mn, max: mx, unit: samples[0].meta.unit || '' };
 }
-var CAM_POS = [70, 58, 96], CAM_TARGET = [0, 9, 0];
+var CAM_POS = [70, 58, 96];   // 只當方向用,實際距離由 frameCamera 依版面與畫面比例算
 
 function initThree() {
   if (three) return;
@@ -12700,7 +12819,7 @@ function initThree() {
   camera.position.set(CAM_POS[0], CAM_POS[1], CAM_POS[2]);
 
   var controls = new THREE.OrbitControls(camera, renderer.domElement);
-  controls.target.set(CAM_TARGET[0], CAM_TARGET[1], CAM_TARGET[2]);
+  controls.target.set(0, HEIGHT_UNITS / 2, 0);
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
   controls.maxPolarAngle = Math.PI * 0.52;
@@ -12708,19 +12827,67 @@ function initThree() {
   controls.maxDistance = 500;
   controls.autoRotateSpeed = 1.6;
 
-  three = { renderer: renderer, scene: scene, camera: camera, controls: controls, mesh: null };
+  three = { renderer: renderer, scene: scene, camera: camera, controls: controls, panels: [],
+            lastCount: -1 };
 
-  window.addEventListener('resize', function () {
-    var w = holder.clientWidth, h = holder.clientHeight;
-    camera.aspect = w / h;
-    camera.updateProjectionMatrix();
-    renderer.setSize(w, h);
-  });
+  window.addEventListener('resize', function () { layoutViewport(); drawProfile(); });
   (function animate() {
     requestAnimationFrame(animate);
     controls.update();
     renderer.render(scene, camera);
+    updatePanelLabels();
   })();
+}
+
+/* 3D 畫布是整頁鋪滿、控制面板疊在上面。剖面圖打開後面板會長高將近一倍,
+ * 不把畫布下緣讓出來的話,晶圓會有一大半躲在面板底下。 */
+function layoutViewport() {
+  var holder = document.getElementById('c3d');
+  var panel = document.getElementById('panel');
+  holder.style.bottom = (panel.offsetHeight || 0) + 'px';
+  if (!three) return;
+  var w = holder.clientWidth, h = holder.clientHeight;
+  if (!w || !h) return;
+  three.camera.aspect = w / h;
+  three.camera.updateProjectionMatrix();
+  three.renderer.setSize(w, h);
+}
+
+/* 取景:把所有面板的外框投影一次量大小,再依比例調整距離,兩三輪就收斂。
+ * 不能寫死距離 —— 直式手機的水平視角比垂直窄,並排兩片會被左右切掉。 */
+function frameCamera() {
+  if (!three || !three.panels.length) return;
+  var zs = parseFloat(document.getElementById('zScale').value) || 1;
+  var top = HEIGHT_UNITS * zs, cy = top / 2, half = 52;
+  var pts = [], i, k;
+  for (i = 0; i < three.panels.length; i++) {
+    var px = three.panels[i].mesh.position.x, pz = three.panels[i].mesh.position.z;
+    for (k = 0; k < 8; k++)
+      pts.push([px + ((k & 1) ? half : -half), (k & 4) ? top : 0, pz + ((k & 2) ? half : -half)]);
+  }
+  var cam = three.camera;
+  var L = Math.sqrt(CAM_POS[0] * CAM_POS[0] + CAM_POS[1] * CAM_POS[1] + CAM_POS[2] * CAM_POS[2]);
+  var dist = 140, v = new THREE.Vector3();
+  for (var it = 0; it < 6; it++) {
+    cam.position.set(CAM_POS[0] / L * dist, cy + CAM_POS[1] / L * dist, CAM_POS[2] / L * dist);
+    cam.lookAt(0, cy, 0);
+    cam.updateMatrixWorld();
+    cam.updateProjectionMatrix();
+    var mu = 0, mv = 0;
+    for (i = 0; i < pts.length; i++) {
+      v.set(pts[i][0], pts[i][1], pts[i][2]).project(cam);
+      if (Math.abs(v.x) > mu) mu = Math.abs(v.x);
+      if (Math.abs(v.y) > mv) mv = Math.abs(v.y);
+    }
+    var f = Math.max(mu, mv) / 0.86;
+    if (!isFinite(f) || f <= 0) break;
+    dist *= f;
+    if (Math.abs(f - 1) < 0.005) break;
+  }
+  three.controls.target.set(0, cy, 0);
+  three.controls.minDistance = Math.min(20, dist * 0.25);
+  three.controls.maxDistance = Math.max(500, dist * 2.5);
+  three.controls.update();
 }
 
 function buildMesh(data, invert, scale) {
@@ -12762,6 +12929,175 @@ function buildMesh(data, invert, scale) {
   return new THREE.Mesh(geo, mat);
 }
 
+/* ============ 剖面圖(通過晶圓中心的直徑) ============
+ * 3D 看得出「這裡凹下去」,但看不出凹多少、凹多寬。剖面是把同一份資料換成
+ * 可以讀數字的形式,不是另一份資料 —— 因此高度軸一律沿用畫面上正在用的那把尺。
+ */
+var profileOn = false;
+var profileAngle = 0;   // 度;0 = 水平(沿 XADR),逆時針為正
+var PROF_N = 241;
+
+/* 雙線性取樣。四角只要有一角是遮罩就整格不取:寧可讓曲線在晶圓邊緣斷掉,
+ * 也不要用圓外的空值外插出一段看起來很像資料的東西。 */
+function bilinearAt(s, fx, fy) {
+  var w = s.meta.w, h = s.meta.h;
+  if (!(fx >= 0) || !(fy >= 0) || fx > w - 1 || fy > h - 1) return NaN;
+  var x0 = Math.min(w - 2, Math.floor(fx)), y0 = Math.min(h - 2, Math.floor(fy));
+  var u = fx - x0, v = fy - y0;
+  var a = realAt(s, y0 * w + x0), b = realAt(s, y0 * w + x0 + 1);
+  var c = realAt(s, (y0 + 1) * w + x0), d = realAt(s, (y0 + 1) * w + x0 + 1);
+  if (a !== a || b !== b || c !== c || d !== d) return NaN;
+  return (a * (1 - u) + b * u) * (1 - v) + (c * (1 - u) + d * u) * v;
+}
+/* 位置正規化成 −1 ~ +1(±1 = 網格內接橢圓的邊界,0 = 中心)。
+ * 不用格點數當橫軸:那樣 96×96 和 128×128 的兩片疊起來會錯開,而它們是同一片晶圓的
+ * 同一段半徑。正規化之後不同解析度、不同 pitch 的樣本才真的能疊在同一張圖上比。
+ *
+ * 取樣長度用內接橢圓而不是「走到網格邊界」:方形網格的內接橢圓就是那個圓,任何角度
+ * 的取樣長度都等於晶圓半徑,45° 和 0° 的曲線因此可以直接對照。走到邊界的話,45° 會
+ * 走到網格角落(長 √2 倍),曲線只佔圖寬的七成,換個角度整條線就縮一次。
+ * 長方形的 CSV 也照顧到了:橢圓在 0° / 90° 分別貼齊長邊與短邊,不會被截掉。 */
+function profileOf(s, angleDeg, N) {
+  N = N || PROF_N;
+  var w = s.meta.w, h = s.meta.h;
+  var cx = (w - 1) / 2, cy = (h - 1) / 2;
+  var a = angleDeg * Math.PI / 180;
+  var dx = Math.cos(a), dy = -Math.sin(a);   // 列索引往下遞增,取負才讓角度是螢幕上的逆時針
+  var ex = dx / cx, ey = dy / cy;
+  var L = 1 / Math.sqrt(ex * ex + ey * ey);
+  var v = new Float32Array(N), gx = new Float32Array(N), gy = new Float32Array(N), i, t;
+  for (i = 0; i < N; i++) {
+    t = (i / (N - 1)) * 2 - 1;
+    gx[i] = cx + t * L * dx;
+    gy[i] = cy + t * L * dy;
+    v[i] = bilinearAt(s, gx[i], gy[i]);
+  }
+  return { v: v, gx: gx, gy: gy, n: N };
+}
+/* 格點座標 → 網格在 mesh 內的座標(與 buildMesh 的 PlaneGeometry 約定一致:
+ * 最長邊 100 單位、列 0 在 −z 側) */
+function gridToScene(s, fx, fy) {
+  var w = s.meta.w, h = s.meta.h, maxDim = Math.max(w, h);
+  var pw = 100 * w / maxDim, ph = 100 * h / maxDim;
+  return [-pw / 2 + fx * (pw / (w - 1)), -ph / 2 + fy * (ph / (h - 1))];
+}
+/* 曲面上的那條紅線。掛成 mesh 的子物件,高度倍率滑桿就自動跟著作用,
+ * 不必另外同步。遮罩處斷開,所以用 LineSegments 而不是連續的 Line。 */
+function cutLine(s, scale) {
+  var pr = profileOf(s, profileAngle);
+  var span = scale.max - scale.min;
+  if (Math.abs(span) < 1e-12) span = 1;
+  var pos = [], prev = null, i;
+  for (i = 0; i < pr.n; i++) {
+    var r = pr.v[i];
+    if (r !== r) { prev = null; continue; }
+    var t = (r - scale.min) / span;
+    if (t < 0) t = 0; else if (t > 1) t = 1;
+    if (inverted) t = 1 - t;
+    var g = gridToScene(s, pr.gx[i], pr.gy[i]);
+    var cur = [g[0], t * HEIGHT_UNITS + 0.6, g[1]];
+    if (prev) pos.push(prev[0], prev[1], prev[2], cur[0], cur[1], cur[2]);
+    prev = cur;
+  }
+  if (!pos.length) return null;
+  var geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  return new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: 0xff4d4d }));
+}
+function updateCutLines() {
+  if (!three || !three.panels) return;
+  var scale = currentScale();
+  for (var i = 0; i < three.panels.length; i++) {
+    var p = three.panels[i];
+    if (p.line) {
+      p.mesh.remove(p.line);
+      p.line.geometry.dispose();
+      p.line.material.dispose();
+      p.line = null;
+    }
+    if (profileOn) {
+      var cl = cutLine(p.sample, scale);
+      if (cl) { p.mesh.add(cl); p.line = cl; }
+    }
+  }
+}
+function drawProfile() {
+  if (!profileOn) return;
+  var cv = document.getElementById('profChart');
+  var W = cv.clientWidth, H = cv.clientHeight;
+  if (!W || !H) return;
+  var dpr = Math.min(window.devicePixelRatio || 1, 2);
+  cv.width = Math.round(W * dpr);
+  cv.height = Math.round(H * dpr);
+  var g = cv.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, W, H);
+
+  var list = displayedSamples();
+  if (!list.length) return;
+  var sc = currentScale(), span = sc.max - sc.min;
+  if (Math.abs(span) < 1e-12) span = 1;
+  var padL = 48, padR = 8, padT = 9, padB = 15;
+  var pw = Math.max(10, W - padL - padR), ph = Math.max(10, H - padT - padB);
+
+  g.font = '10px Consolas,monospace';
+  g.strokeStyle = '#2a3442';
+  g.lineWidth = 1;
+  g.strokeRect(padL + 0.5, padT + 0.5, pw, ph);
+
+  var i, k, f, yy;
+  for (k = 0; k <= 2; k++) {                       // 高度軸三格刻度,與右側圖例同一把尺
+    f = k / 2;
+    yy = padT + ph - f * ph;
+    if (k === 1) {
+      g.strokeStyle = '#232c39';
+      g.beginPath(); g.moveTo(padL, yy + 0.5); g.lineTo(padL + pw, yy + 0.5); g.stroke();
+    }
+    g.fillStyle = '#93a0b0';
+    g.textAlign = 'right'; g.textBaseline = 'middle';
+    g.fillText(fmtNum(sc.min + (inverted ? 1 - f : f) * span), padL - 5, yy);
+  }
+  g.strokeStyle = '#2a3442';
+  g.beginPath();
+  g.moveTo(padL + pw / 2 + 0.5, padT); g.lineTo(padL + pw / 2 + 0.5, padT + ph); g.stroke();
+  g.fillStyle = '#93a0b0';
+  g.textBaseline = 'top';
+  g.textAlign = 'left';   g.fillText('邊緣', padL, padT + ph + 3);
+  g.textAlign = 'center'; g.fillText('中心', padL + pw / 2, padT + ph + 3);
+  g.textAlign = 'right';  g.fillText('邊緣 ' + (sc.unit || ''), padL + pw, padT + ph + 3);
+
+  // 超出色階範圍的值讓它畫到框外再裁掉,不夾在邊界上 —— 夾住會變成一段假的平台
+  g.save();
+  g.beginPath(); g.rect(padL, padT, pw, ph); g.clip();
+  for (k = 0; k < list.length; k++) {
+    var pr = profileOf(list[k], profileAngle);
+    g.strokeStyle = list.length > 1 ? PANEL_COLORS[k % PANEL_COLORS.length] : '#3d9bff';
+    g.lineWidth = 1.6;
+    g.beginPath();
+    var pen = false;
+    for (i = 0; i < pr.n; i++) {
+      var r = pr.v[i];
+      if (r !== r) { pen = false; continue; }
+      var t = (r - sc.min) / span;
+      if (inverted) t = 1 - t;
+      var X = padL + (i / (pr.n - 1)) * pw, Y = padT + ph - t * ph;
+      if (pen) g.lineTo(X, Y); else { g.moveTo(X, Y); pen = true; }
+    }
+    g.stroke();
+  }
+  g.restore();
+
+  if (list.length > 1) {                            // 面板名牌用的顏色就是曲線的顏色
+    g.textAlign = 'right'; g.textBaseline = 'top';
+    for (k = 0; k < list.length; k++) {
+      var nm = String(list[k].meta.name || ('#' + (k + 1)));
+      if (nm.length > 12) nm = nm.slice(0, 11) + '…';
+      g.fillStyle = PANEL_COLORS[k % PANEL_COLORS.length];
+      g.fillText(nm, padL + pw - 4, padT + 3 + k * 12);
+    }
+  }
+}
+
 /* 差異圖 A − B。刻意擋掉沒有物理意義的相減,而不是算出一個看起來很專業的垃圾。 */
 function makeDiff(a, b) {
   if (a.meta.w !== b.meta.w || a.meta.h !== b.meta.h)
@@ -12796,33 +13132,114 @@ function show3D(data) { showSamples([data]); }
 function showSamples(list) {
   samples = list;
   activeIdx = 0;
+  viewStart = 0;
   diffSample = null;
   sharedScale = true;
+  multiView = canMulti();
   showCurrent(true);
+}
+/* 加掃:接在既有樣本後面,而不是取代。前面幾片是花時間掃進來的,不能被下一片洗掉。 */
+function addSample(d) {
+  samples = samples.concat([d]);
+  activeIdx = samples.length - 1;
+  diffSample = null;
+  viewStart = Math.max(0, samples.length - MAX_SAMPLES);
+  multiView = canMulti();
+  showCurrent(false);
+  if (!samplesCompatible())
+    showStatus('新這片的量測種類/單位與前面幾片不同,共用色階沒有意義,已改回單片顯示。',
+      8000);
 }
 function showCurrent(resetInvert) {
   viewData = currentSample();
   if (!viewData) return;
+  if (!canMulti()) multiView = false;
   if (resetInvert) {
     inverted = false;
     document.getElementById('btnInvert').classList.remove('on');
   }
   switchScreen('scrView');
   initThree();
+  layoutViewport();
   rebuildMesh();
   updateMetaUI();
   updateSampleUI();
+  drawProfile();
+}
+function clearPanels() {
+  if (!three) return;
+  var host = document.getElementById('panelLabels');
+  for (var i = 0; i < three.panels.length; i++) {
+    var m = three.panels[i].mesh;
+    three.scene.remove(m);
+    m.traverse(function (o) {
+      if (o.geometry) o.geometry.dispose();
+      if (o.material) o.material.dispose();
+    });
+  }
+  three.panels = [];
+  host.innerHTML = '';
 }
 function rebuildMesh() {
-  if (!three || !viewData) return;
-  if (three.mesh) {
-    three.scene.remove(three.mesh);
-    three.mesh.geometry.dispose();
-    three.mesh.material.dispose();
+  if (!three) return;
+  clearPanels();
+  var list = displayedSamples();
+  if (!list.length) return;
+  var scale = currentScale(), slots = panelSlots(list.length);
+  var zs = parseFloat(document.getElementById('zScale').value) || 1;
+  for (var i = 0; i < list.length; i++) {
+    var mesh = buildMesh(list[i], inverted, scale);
+    mesh.position.set(slots[i][0], 0, slots[i][1]);
+    mesh.scale.y = zs;
+    three.scene.add(mesh);
+    three.panels.push({ mesh: mesh, sample: list[i], line: null,
+                        color: PANEL_COLORS[i % PANEL_COLORS.length], el: null });
   }
-  three.mesh = buildMesh(viewData, inverted, currentScale());
-  three.mesh.scale.y = parseFloat(document.getElementById('zScale').value);
-  three.scene.add(three.mesh);
+  updateCutLines();
+  syncPanelLabels();
+  // 只有面板數改變時才重新取景 —— ◀ ▶ 換片時把使用者轉好的視角拉走很煩
+  if (three.lastCount !== list.length) {
+    three.lastCount = list.length;
+    frameCamera();
+  }
+  updatePanelLabels();   // 立刻定位一次,名牌才不會在第一幀閃在左上角
+}
+/* 名牌直接標在各自的晶圓上方(每幀投影一次),不另外佔用面板高度。
+ * 顏色與剖面圖的曲線一致,兩張圖之間不必再對照第三份圖例。 */
+function syncPanelLabels() {
+  var host = document.getElementById('panelLabels');
+  host.innerHTML = '';
+  if (!three || three.panels.length < 2) return;
+  for (var i = 0; i < three.panels.length; i++) {
+    var p = three.panels[i];
+    var nm = String(p.sample.meta.name || ('#' + (i + 1)));
+    if (nm.length > 16) nm = nm.slice(0, 15) + '…';
+    var el = document.createElement('div');
+    el.className = 'panelLabel';
+    var dot = document.createElement('i');
+    dot.style.background = p.color;
+    el.appendChild(dot);
+    el.appendChild(document.createTextNode(nm));   // 檔名是使用者取的,一律當文字塞
+    host.appendChild(el);
+    p.el = el;
+  }
+}
+var labelVec = null;
+function updatePanelLabels() {
+  if (!three || three.panels.length < 2) return;
+  if (!labelVec) labelVec = new THREE.Vector3();
+  var holder = document.getElementById('c3d');
+  var W = holder.clientWidth, H = holder.clientHeight;
+  var top = HEIGHT_UNITS * (parseFloat(document.getElementById('zScale').value) || 1) + 7;
+  for (var i = 0; i < three.panels.length; i++) {
+    var p = three.panels[i];
+    if (!p.el) continue;
+    labelVec.set(p.mesh.position.x, top, p.mesh.position.z).project(three.camera);
+    if (labelVec.z > 1) { p.el.style.display = 'none'; continue; }   // 轉到相機背面
+    p.el.style.display = '';
+    p.el.style.left = ((labelVec.x + 1) / 2 * W).toFixed(1) + 'px';
+    p.el.style.top = ((1 - labelVec.y) / 2 * H).toFixed(1) + 'px';
+  }
 }
 var statusTimer = null;
 function showStatus(msg, ms, info) {
@@ -12836,30 +13253,57 @@ function showStatus(msg, ms, info) {
   }, ms);
 }
 function updateSampleUI() {
-  document.getElementById('sampleRow').style.display = samples.length > 1 ? '' : 'none';
-  document.getElementById('sampleLbl').textContent =
-    diffSample ? '差異圖' : (activeIdx + 1) + ' / ' + samples.length;
+  var multi = multiView && !diffSample && samples.length > 1;
   var compat = samplesCompatible();
+  document.getElementById('sampleRow').style.display = samples.length > 1 ? '' : 'none';
+  var lbl;
+  if (diffSample) lbl = '差異圖';
+  else if (multi) lbl = samples.length <= MAX_SAMPLES ? '並排 ' + samples.length + ' 片'
+    : (viewStart + 1) + '–' + Math.min(samples.length, viewStart + MAX_SAMPLES) + ' / ' + samples.length;
+  else lbl = (activeIdx + 1) + ' / ' + samples.length;
+  document.getElementById('sampleLbl').textContent = lbl;
+
+  var bm = document.getElementById('btnMulti');
+  bm.classList.toggle('on', multi);
+  bm.disabled = !!diffSample || !compat || samples.length < 2;
   var bs = document.getElementById('btnShared');
-  bs.classList.toggle('on', sharedScale && compat);
-  bs.disabled = !compat; // 量測種類不同時共用色階沒有意義,不給開
+  // 量測種類不同時共用色階沒有意義,不給開;並排時是強制共用,也不給關
+  bs.classList.toggle('on', (sharedScale || multi) && compat);
+  bs.disabled = !compat || multi;
   document.getElementById('btnDiff').classList.toggle('on', !!diffSample);
-  document.getElementById('btnPrev').disabled = !!diffSample;
-  document.getElementById('btnNext').disabled = !!diffSample;
+  // 並排且全部塞得下時,◀ ▶ 沒有東西可捲
+  var navOff = !!diffSample || (multi ? samples.length <= MAX_SAMPLES : samples.length < 2);
+  document.getElementById('btnPrev').disabled = navOff;
+  document.getElementById('btnNext').disabled = navOff;
+  var ba = document.getElementById('btnAdd');
+  ba.disabled = samples.length >= MAX_SAMPLES;
+  ba.textContent = samples.length >= MAX_SAMPLES ? '已達 ' + MAX_SAMPLES + ' 片上限' : '📷 加掃一片';
 }
 function updateMetaUI() {
-  var m = viewData.meta, sc = currentScale();
-  document.getElementById('mName').textContent = m.name || '未命名資料';
-  var info = m.w + ' × ' + m.h + ' ・ 本片 ' + fmtNum(m.min) + ' ~ ' + fmtNum(m.max) + ' ' + (m.unit || '');
-  if (!diffSample && samples.length > 1) {
-    if (!samplesCompatible())
-      info += '\n⚠ 各片量測種類不同,無法共用色階 ・ 外觀不可互相比較';
-    else if (sharedScale)
-      info += '\n共用色階(' + samples.length + ' 片)' + fmtNum(sc.min) + ' ~ ' + fmtNum(sc.max) + ' ' + (sc.unit || '');
-    else
-      info += '\n⚠ 共用色階已關閉,各片自行normalize ・ 外觀不可互相比較';
+  var list = displayedSamples(), sc = currentScale();
+  if (!list.length) return;
+  var info;
+  if (list.length > 1) {
+    document.getElementById('mName').textContent = '並排比較 ' + list.length + ' 片';
+    info = '共用色階 ' + fmtNum(sc.min) + ' ~ ' + fmtNum(sc.max) + ' ' + (sc.unit || '') +
+           ' ・ 各片名稱標在晶圓上方';
+    if (samples.length > list.length)
+      info += '\n共 ' + samples.length + ' 片,用 ◀ ▶ 捲動要看的那 ' + MAX_SAMPLES + ' 片';
+  } else {
+    var m = list[0].meta;
+    document.getElementById('mName').textContent = m.name || '未命名資料';
+    info = m.w + ' × ' + m.h + ' ・ 本片 ' + fmtNum(m.min) + ' ~ ' + fmtNum(m.max) + ' ' + (m.unit || '');
+    if (!diffSample && samples.length > 1) {
+      if (!samplesCompatible())
+        info += '\n⚠ 各片量測種類不同,無法共用色階 ・ 外觀不可互相比較';
+      else if (sharedScale)
+        info += '\n共用色階(' + samples.length + ' 片)' + fmtNum(sc.min) + ' ~ ' + fmtNum(sc.max) + ' ' + (sc.unit || '');
+      else
+        info += '\n⚠ 共用色階已關閉,各片自行normalize ・ 外觀不可互相比較';
+    }
+    if (diffSample) info += '\n差值範圍,正值代表前者較高';
   }
-  if (diffSample) info += '\n差值範圍,正值代表前者較高';
+  if (profileOn) info += '\n剖面 ' + profileAngle + '°(曲面上的紅線)';
   document.getElementById('mInfo').textContent = info;
   var stops = [];
   for (var i = 0; i < VIRIDIS.length; i++) {
@@ -12875,14 +13319,16 @@ function updateMetaUI() {
 }
 
 /* ============ 事件 ============ */
-document.getElementById('btnStart').addEventListener('click', startScan);
+document.getElementById('btnStart').addEventListener('click', function () { startScan(false); });
 document.getElementById('btnCancel').addEventListener('click', function () {
   stopScan();
-  switchScreen('scrHome');
+  appendOnScan = false;
+  // 加掃到一半取消時要回到原本的畫面,不是回首頁把前幾片丟掉
+  if (samples.length) showCurrent(false);
+  else switchScreen('scrHome');
 });
-document.getElementById('btnRescan').addEventListener('click', function () {
-  startScan();
-});
+document.getElementById('btnRescan').addEventListener('click', function () { startScan(false); });
+document.getElementById('btnAdd').addEventListener('click', function () { startScan(true); });
 document.getElementById('btnDemo').addEventListener('click', function () {
   showFromMatrix(demoWafer(96), 'demo-wafer', 'µm', '示範資料(非實際量測)');
 });
@@ -12923,19 +13369,46 @@ document.getElementById('fileTxt').addEventListener('change', function () {
     rd.readAsText(f);
   });
 });
-document.getElementById('btnPrev').addEventListener('click', function () {
+/* 並排時 ◀ ▶ 捲的是「顯示哪 4 片」,單片時換的是「顯示哪一片」 */
+function stepSample(dir) {
   if (diffSample || samples.length < 2) return;
-  activeIdx = (activeIdx - 1 + samples.length) % samples.length;
+  if (multiView) {
+    if (samples.length <= MAX_SAMPLES) return;
+    viewStart = Math.max(0, Math.min(samples.length - MAX_SAMPLES, viewStart + dir));
+  } else {
+    activeIdx = (activeIdx + dir + samples.length) % samples.length;
+  }
   showCurrent(false);
-});
-document.getElementById('btnNext').addEventListener('click', function () {
-  if (diffSample || samples.length < 2) return;
-  activeIdx = (activeIdx + 1) % samples.length;
+}
+document.getElementById('btnPrev').addEventListener('click', function () { stepSample(-1); });
+document.getElementById('btnNext').addEventListener('click', function () { stepSample(1); });
+document.getElementById('btnMulti').addEventListener('click', function () {
+  if (!canMulti()) return;
+  multiView = !multiView;
+  if (multiView) viewStart = Math.max(0, Math.min(samples.length - MAX_SAMPLES, activeIdx));
+  else activeIdx = Math.min(samples.length - 1, viewStart);
   showCurrent(false);
 });
 document.getElementById('btnShared').addEventListener('click', function () {
   sharedScale = !sharedScale;
   showCurrent(false);
+});
+document.getElementById('btnProfile').addEventListener('click', function () {
+  profileOn = !profileOn;
+  this.classList.toggle('on', profileOn);
+  document.getElementById('profBox').classList.toggle('hidden', !profileOn);
+  layoutViewport();          // 面板高度變了,3D 畫布要跟著讓出空間
+  updateCutLines();
+  frameCamera();
+  updateMetaUI();
+  drawProfile();
+});
+document.getElementById('profAngle').addEventListener('input', function () {
+  profileAngle = parseInt(this.value, 10) || 0;
+  document.getElementById('profVal').textContent = profileAngle + '°';
+  updateCutLines();          // 只換那條紅線,不重建整片網格
+  updateMetaUI();
+  drawProfile();
 });
 document.getElementById('btnDiff').addEventListener('click', function () {
   if (diffSample) { diffSample = null; showCurrent(false); return; }
@@ -12948,17 +13421,19 @@ document.getElementById('btnDiff').addEventListener('click', function () {
     showStatus(e.message, 8000); // 擋下來說明原因,不算出無意義的數字
   }
 });
+function setZScale(v) {
+  document.getElementById('zVal').textContent = v.toFixed(2).replace(/0$/, '') + '×';
+  if (!three) return;
+  for (var i = 0; i < three.panels.length; i++) three.panels[i].mesh.scale.y = v;
+}
 document.getElementById('zScale').addEventListener('input', function () {
-  document.getElementById('zVal').textContent = parseFloat(this.value).toFixed(2).replace(/0$/, '') + '×';
-  if (three && three.mesh) three.mesh.scale.y = parseFloat(this.value);
+  setZScale(parseFloat(this.value));
 });
 document.getElementById('btnReset').addEventListener('click', function () {
   if (!three) return;
-  three.camera.position.set(CAM_POS[0], CAM_POS[1], CAM_POS[2]);
-  three.controls.target.set(CAM_TARGET[0], CAM_TARGET[1], CAM_TARGET[2]);
   document.getElementById('zScale').value = 1;
-  document.getElementById('zVal').textContent = '1.0×';
-  if (three.mesh) three.mesh.scale.y = 1;
+  setZScale(1);
+  frameCamera();
 });
 document.getElementById('btnRotate').addEventListener('click', function () {
   if (!three) return;
@@ -12970,6 +13445,7 @@ document.getElementById('btnInvert').addEventListener('click', function () {
   this.classList.toggle('on', inverted);
   rebuildMesh();
   updateMetaUI();
+  drawProfile();
 });
 document.addEventListener('visibilitychange', function () {
   if (!document.hidden && scanning) requestWakeLock();
@@ -12989,7 +13465,10 @@ function buildReportEnv() {
     heightUnits: HEIGHT_UNITS,
     invert: inverted,
     zScale: parseFloat(document.getElementById('zScale').value) || 1,
-    cutoff: cutoff
+    cutoff: cutoff,
+    // 剖面沿用畫面上選的角度,報表上會把角度寫出來 —— 換一個角度就是另一條曲線
+    profileAngle: profileAngle,
+    profileAt: profileOf
   };
   var per = [], mn = Infinity, mx = -Infinity, i, r;
   for (i = 0; i < env.samples.length; i++) {
@@ -13064,7 +13543,25 @@ window.__wv = {
   buildReportEnv: buildReportEnv,
   getSamples: function () { return samples; },
   setShared: function (v) { sharedScale = v; showCurrent(false); },
-  setActive: function (i) { activeIdx = i; showCurrent(false); }
+  setActive: function (i) { activeIdx = i; showCurrent(false); },
+  profileOf: profileOf,
+  bilinearAt: bilinearAt,
+  gridToScene: gridToScene,
+  displayedSamples: displayedSamples,
+  addSample: addSample,
+  panelSlots: panelSlots,
+  getPanels: function () { return three ? three.panels : []; },
+  getThree: function () { return three; },
+  setMulti: function (v) { multiView = v && canMulti(); showCurrent(false); },
+  setProfile: function (on, deg) {
+    profileOn = !!on;
+    if (deg !== undefined) profileAngle = deg;
+    document.getElementById('btnProfile').classList.toggle('on', profileOn);
+    document.getElementById('profBox').classList.toggle('hidden', !profileOn);
+    document.getElementById('profAngle').value = profileAngle;
+    document.getElementById('profVal').textContent = profileAngle + '°';
+    layoutViewport(); updateCutLines(); frameCamera(); updateMetaUI(); drawProfile();
+  }
 };
 </script>
 </body>
