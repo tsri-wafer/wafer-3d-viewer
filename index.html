@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>晶圓 3D 檢視器(手機端)</title>
+<title>晶圓翹曲分析(手機端)</title>
 <style>
   :root{
     --bg:#10141b; --panel:rgba(22,28,38,.92); --ink:#e8edf4; --muted:#93a0b0;
@@ -24,14 +24,30 @@
   select{font:inherit;font-size:13px;padding:7px 8px;border-radius:8px;
          border:1px solid var(--line);background:#1c2430;color:var(--ink);}
 
-  /* ---- 首頁 ---- */
-  #scrHome{align-items:center;justify-content:center;gap:14px;padding:26px;text-align:center;}
-  #scrHome .logo{font-size:44px;}
-  #scrHome h1{font-size:22px;letter-spacing:2px;}
-  #scrHome p{color:var(--muted);font-size:14px;line-height:1.8;max-width:340px;}
-  #scrHome button{width:240px;}
-  #homeErr{color:var(--err);font-size:13px;min-height:18px;max-width:320px;
-           white-space:pre-line;line-height:1.6;}
+  /* ---- 首頁:只有兩個動作 ---- */
+  #scrHome{padding:max(28px,env(safe-area-inset-top)) 20px 24px;gap:22px;overflow-y:auto;
+           background:radial-gradient(120% 70% at 85% -10%,#1d2a3c 0%,transparent 60%),var(--bg);}
+  .homeHead{margin:auto 0 0;max-width:460px;width:100%;align-self:center;}
+  .homeHead h1{font-size:30px;line-height:1.2;letter-spacing:.5px;font-weight:700;}
+  .homeHead p{color:var(--muted);font-size:14px;line-height:1.7;margin-top:8px;}
+  .tiles{display:flex;flex-direction:column;gap:12px;max-width:460px;width:100%;align-self:center;}
+  .tile{display:grid;grid-template-columns:64px 1fr;gap:16px;align-items:center;text-align:left;width:100%;
+        padding:18px 18px 18px 16px;border-radius:16px;border:1px solid #33506f;background:#17212e;
+        box-shadow:0 10px 26px rgba(0,0,0,.35);transition:transform .12s ease,border-color .12s ease,background .12s ease;}
+  .tile:hover:not(:disabled){border-color:var(--accent);background:#1b2838;}
+  .tile:active:not(:disabled){transform:scale(.985);}
+  .tile:focus-visible,.chip:focus-visible,.sweepRow:focus-visible,.seg button:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+  .tile svg{width:64px;height:64px;display:block;}
+  .tile b{display:block;font-size:20px;line-height:1.3;}
+  .tile small{display:block;margin-top:4px;font-size:13px;line-height:1.5;color:var(--muted);overflow-wrap:anywhere;}
+  .tile.done small{color:var(--ok);}
+  .tile:disabled{opacity:1;background:transparent;border:1px dashed var(--line);box-shadow:none;cursor:default;}
+  .tile:disabled b{color:var(--muted);}
+  .tile:disabled svg{opacity:.4;}
+  .homeFoot{margin:0 0 auto;max-width:460px;width:100%;align-self:center;display:flex;flex-direction:column;gap:10px;}
+  #btnResult{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600;}
+  #homeErr{color:var(--err);font-size:13px;white-space:pre-line;line-height:1.6;}
+  #homeErr:empty{display:none;}
 
   /* ---- 掃描頁 ---- */
   #scrScan{background:#000;}
@@ -47,6 +63,8 @@
   #scanBottom{position:absolute;bottom:0;left:0;right:0;padding:16px;text-align:center;
               background:linear-gradient(transparent,rgba(0,0,0,.8));}
   #scanBottom .tip{color:#cfd8e3;font-size:13px;margin-bottom:12px;line-height:1.7;}
+  #scanBottom .row{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;}
+  #scanLabel{font-size:12px;letter-spacing:1px;color:var(--muted);margin-bottom:6px;}
 
   /* ---- 3D 頁 ---- */
   #scrView{background:var(--bg);}
@@ -56,6 +74,7 @@
   #viewTop .meta{font-size:13px;line-height:1.6;}
   #viewTop .meta b{font-size:15px;}
   #viewTop .meta span{color:var(--muted);}
+  #btnViewBack{pointer-events:auto;flex:none;font-size:13px;padding:8px 12px;background:rgba(22,28,38,.85);}
   #legend{position:absolute;right:12px;top:76px;width:14px;height:170px;border-radius:7px;
           border:1px solid var(--line);}
   #legendMax,#legendMin{position:absolute;right:32px;font-size:11px;color:var(--muted);
@@ -88,19 +107,110 @@
   #profBox{display:flex;flex-direction:column;gap:8px;}
   #profChart{width:100%;height:112px;display:block;border:1px solid var(--line);
              border-radius:8px;background:#151b25;}
+
+  /* ---- 結果頁 ---- */
+  #scrResult{background:var(--bg);}
+  .resTop{display:flex;gap:12px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--line);
+          background:rgba(16,20,27,.96);flex:none;}
+  .resTop button{flex:none;font-size:14px;padding:8px 12px;}
+  .resTitle{min-width:0;}
+  .resTitle b{display:block;font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .resTitle span{display:block;font-size:12px;color:var(--muted);line-height:1.5;}
+  .resScroll{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:18px 16px 28px;}
+  .resGrid{max-width:1080px;margin:0 auto;display:grid;gap:26px;grid-template-columns:minmax(0,1fr);}
+  .demoBanner{max-width:1080px;margin:0 auto 16px;padding:9px 12px;border:1px solid #6b5a22;border-radius:8px;
+              color:#f0d27a;background:#2a2412;font-size:13px;}
+  .verdict .vTag{font-size:12px;letter-spacing:.5px;color:var(--muted);}
+  .verdict h2{font-size:26px;line-height:1.3;margin:6px 0 8px;font-weight:700;}
+  .verdict p{font-size:14px;line-height:1.75;color:#c7d0dc;}
+  .verdict.bad h2{color:var(--err);font-size:18px;line-height:1.5;}
+  .verdict.bad .vTag{color:var(--err);}
+  .stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1px;background:var(--line);
+         border-top:1px solid var(--line);border-bottom:1px solid var(--line);align-self:start;}
+  .stat{background:var(--bg);padding:12px 12px 12px 0;}
+  .stat:nth-child(even){padding-left:12px;}
+  .sLabel{font-size:12px;color:var(--muted);}
+  .sValue{font-size:20px;line-height:1.35;font-variant-numeric:tabular-nums;margin-top:2px;overflow-wrap:anywhere;}
+  .sUnit{font-size:12px;color:var(--muted);}
+  .sHint{font-size:11px;color:#7b8796;margin-top:2px;}
+  .block h3{font-size:15px;font-weight:600;}
+  .blockHead{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px;}
+  .blockHint{font-size:13px;line-height:1.7;color:var(--muted);margin-top:8px;}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;}
+  .chip{font-size:13px;padding:6px 11px;border-radius:999px;background:transparent;color:#c7d0dc;}
+  .chip:hover{border-color:#47586c;}
+  .chip.on{background:var(--ink);border-color:var(--ink);color:#10141b;font-weight:600;}
+  .mapWrap{display:grid;grid-template-columns:minmax(0,1fr) 74px;gap:8px;align-items:stretch;max-width:520px;}
+  #resCanvas{width:100%;aspect-ratio:1/1;display:block;cursor:crosshair;touch-action:manipulation;}
+  .legendCol{display:flex;flex-direction:column;font-size:11px;color:var(--muted);padding:10px 0;
+             font-variant-numeric:tabular-nums;min-width:0;}
+  #resLegendUnit{margin-bottom:6px;}
+  .legendBody{flex:1;display:grid;grid-template-columns:12px minmax(0,1fr);gap:6px;min-height:0;}
+  #resLegend{border-radius:3px;}
+  .legendTicks{display:flex;flex-direction:column;justify-content:space-between;overflow:hidden;}
+  #resReadout{font-size:13px;margin-top:6px;font-variant-numeric:tabular-nums;color:#c7d0dc;}
+  .sweepHead,.sweepRow{display:grid;grid-template-columns:78px minmax(30px,1fr) 66px 74px;gap:8px;align-items:center;}
+  .sweepHead{font-size:11px;color:var(--muted);padding:0 10px 6px;}
+  .sweepRow{width:100%;text-align:left;background:transparent;border:0;border-top:1px solid var(--line);
+            border-radius:0;padding:11px 10px;font-size:13px;}
+  .sweepRow:hover{background:#171e29;}
+  .sweepRow.on{background:#1c2a3b;box-shadow:inset 3px 0 0 var(--accent);}
+  .swDeg{white-space:nowrap;}
+  .swTrack{height:6px;border-radius:3px;background:#222b37;overflow:hidden;display:block;}
+  .swBar{display:block;height:100%;border-radius:3px;background:#5f7f9f;}
+  .sweepRow.on .swBar{background:var(--accent);}
+  .swNum{text-align:right;font-variant-numeric:tabular-nums;color:#c7d0dc;font-size:12px;}
+  .setRow{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;margin-top:12px;font-size:13px;color:var(--muted);}
+  .seg{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden;}
+  .seg button{border:0;border-radius:0;font-size:13px;padding:8px 12px;background:transparent;}
+  .seg button.on{background:var(--ink);color:#10141b;font-weight:600;}
+  #resEdge{width:72px;font:inherit;font-size:14px;padding:7px 8px;border-radius:8px;border:1px solid var(--line);
+           background:#1c2430;color:var(--ink);}
+  #resNotes{padding-left:18px;font-size:13px;line-height:1.75;color:#c7d0dc;margin-top:8px;}
+  details.guide summary{cursor:pointer;font-size:15px;font-weight:600;}
+  details.guide ul{padding-left:18px;font-size:13px;line-height:1.75;color:#c7d0dc;margin-top:8px;}
+  .resActions{max-width:1080px;margin:26px auto 0;display:flex;gap:10px;flex-wrap:wrap;}
+  #resBusy{position:absolute;top:60px;left:50%;transform:translateX(-50%);padding:7px 14px;border-radius:999px;
+           background:var(--panel);border:1px solid var(--line);font-size:13px;}
+  @media (min-width:900px){
+    .resGrid{grid-template-columns:minmax(0,5fr) minmax(0,6fr);column-gap:40px;}
+    #resVerdict{grid-column:1;grid-row:1;}
+    #resStats{grid-column:1;grid-row:2;}
+    #resMapPanel{grid-column:2;grid-row:1 / span 3;}
+    #resSweepPanel{grid-column:1;grid-row:3;}
+    .verdict h2{font-size:30px;}
+  }
 </style>
 </head>
 <body>
 
 <div id="scrHome" class="screen active">
-  <div class="logo">🔬</div>
-  <h1>晶圓 3D 檢視器</h1>
-  <p>對準電腦螢幕上的 <b>QR 動畫</b> 連續掃描,自動接收深度資料並顯示可旋轉的 3D 圖形。若量測檔已帶到手機,也可直接開啟檔案。所有資料只在手機本機處理,不會上傳。</p>
-  <button class="primary" id="btnStart">📷 開始掃描</button>
-  <button id="btnFile">📄 開啟資料檔(.ywa / CSV / TXT・可多選)</button>
-  <button id="btnDemo">看看示範 3D</button>
-  <input type="file" id="fileTxt" accept=".ywa,.csv,.txt,.tsv,.dat,.asc,.xyz" multiple hidden>
-  <div id="homeErr"></div>
+  <div class="homeHead">
+    <h1>晶圓翹曲分析</h1>
+    <p>對準電腦端的 QR 動畫掃描。資料只在手機上處理,不會上傳。</p>
+  </div>
+  <div class="tiles">
+    <button class="tile" id="btnHeight" type="button">
+      <svg viewBox="0 0 64 64" aria-hidden="true">
+        <path d="M32 4a28 28 0 0 1 21 46.500h-42A28 28 0 0 1 32 4z" fill="#22344a" stroke="#6da7ec" stroke-width="1.500"/>
+        <path d="M9 34c7-9 14-9 23-2s16 6 23-3" fill="none" stroke="#6da7ec" stroke-width="2"/>
+        <path d="M12 42c7-6 13-6 20-1s14 4 21-2" fill="none" stroke="#3d9bff" stroke-opacity=".55" stroke-width="1.500"/>
+      </svg>
+      <span><b>掃描 Height Map</b><small id="heightStatus">還沒有資料</small></span>
+    </button>
+    <button class="tile" id="btnPl" type="button" disabled>
+      <svg viewBox="0 0 64 64" aria-hidden="true">
+        <path d="M32 4a28 28 0 0 1 21 46.500h-42A28 28 0 0 1 32 4z" fill="none" stroke="#93a0b0" stroke-width="1.500" stroke-dasharray="3 3"/>
+      </svg>
+      <span><b>掃描 PL</b><small>PL 檔案格式確認後開放</small></span>
+    </button>
+  </div>
+  <div class="homeFoot">
+    <button id="btnResult" class="hidden" type="button">看結果</button>
+    <div id="homeErr"></div>
+    <button id="btnFile" class="hidden" type="button">從檔案讀取</button>
+    <input type="file" id="fileTxt" accept=".ywa,.csv,.txt,.tsv,.dat,.asc,.xyz" multiple hidden>
+  </div>
 </div>
 
 <div id="scrScan" class="screen">
@@ -108,6 +218,7 @@
   <canvas id="grab" hidden></canvas>
   <div id="scanTop">
     <div class="bar">
+      <div id="scanLabel">掃描 HEIGHT MAP</div>
       <div id="progText">等待第一個 QR…</div>
       <div id="progTrack"><div id="progFill"></div></div>
       <div id="dots"></div>
@@ -115,7 +226,84 @@
   </div>
   <div id="scanBottom">
     <div class="tip">手機距離螢幕約 20–40 公分,讓 QR 佔滿畫面中央。<br>漏掉的幀會在下一輪循環自動補上,保持對準即可。</div>
-    <button id="btnCancel">取消</button>
+    <div class="row">
+      <button id="btnCancel" type="button">取消</button>
+      <button id="btnScanFile" type="button">從檔案讀取</button>
+    </div>
+  </div>
+</div>
+
+<div id="scrResult" class="screen">
+  <div class="resTop">
+    <button id="resBack" type="button" aria-label="回首頁">← 首頁</button>
+    <div class="resTitle"><b id="resName">—</b><span id="resMeta"></span></div>
+  </div>
+  <div id="resBusy" class="hidden" role="status">計算中…</div>
+  <div class="resScroll">
+    <div id="resDemo" class="demoBanner hidden">這是示範資料,不是實際量測。</div>
+    <div class="resGrid">
+      <section id="resVerdict" class="verdict" aria-live="polite"></section>
+      <section id="resMapPanel" class="block">
+        <div class="blockHead">
+          <h3 id="resMapTitle">Laplacian</h3>
+          <button id="resField3D" class="small" type="button">用 3D 看這張圖</button>
+        </div>
+        <div id="resChips" class="chips"></div>
+        <div class="mapWrap">
+          <canvas id="resCanvas" role="img" aria-label="晶圓上每一點的數值,數字見上方的摘要"></canvas>
+          <div class="legendCol">
+            <div id="resLegendUnit"></div>
+            <div class="legendBody">
+              <div id="resLegend"></div>
+              <div class="legendTicks"><span id="resLegendMax"></span><span id="resLegendMid"></span><span id="resLegendMin"></span></div>
+            </div>
+          </div>
+        </div>
+        <div id="resReadout" aria-live="polite"></div>
+        <p id="resMapHint" class="blockHint"></p>
+      </section>
+      <section id="resStats" class="stats"></section>
+      <section id="resSweepPanel" class="block">
+        <h3>擬合階數</h3>
+        <p class="blockHint">點一列換階數。階數低抓不到小範圍的變化;階數高,邊緣的曲率雜訊會變大。「建議」是交叉驗證誤差在最佳值一個標準誤內的最低階,只是參考:留出的區塊分法不同,建議的階數也可能不同。</p>
+        <div class="sweepHead" style="margin-top:12px;"><span>階數</span><span></span><span style="text-align:right;">驗證誤差</span><span style="text-align:right;">曲率雜訊</span></div>
+        <div id="resSweep"></div>
+      </section>
+      <section id="resSettings" class="block">
+        <h3>分析設定</h3>
+        <div class="setRow">
+          <span>殘差扣掉</span>
+          <div class="seg">
+            <button id="resModelBowl" type="button">等向碗形</button>
+            <button id="resModelQuad" type="button">含馬鞍</button>
+          </div>
+        </div>
+        <div class="setRow">
+          <label for="resEdge">邊緣排除</label>
+          <input id="resEdge" type="number" min="0" step="1" inputmode="decimal"> mm
+        </div>
+      </section>
+      <section id="resNotesPanel" class="block hidden">
+        <h3>這次分析的提醒</h3>
+        <ul id="resNotes"></ul>
+      </section>
+      <section class="block">
+        <details class="guide">
+          <summary>解讀時要注意</summary>
+          <ul>
+            <li>Stoney 對應的是「鍍膜前後的曲率變化」。只有一張 height map 時,晶圓本來的形狀也算在曲率裡。</li>
+            <li>4 階多項式的 Laplacian 只是一個二次曲面,小範圍的局部應力會被抹平。假晶圓實測:應力區 σ 是半徑的 0.33 倍時,曲率圖與真值相關 0.81;0.16 倍時只剩 0.41。</li>
+            <li>階數不是越高越好,邊緣的擬合雜訊會變得很大,可以切到「Laplacian 雜訊」那張圖看。</li>
+            <li>殘差是高度不是應力:∇²z > 0 的地方高度相對周圍是凹的,正負號通常跟曲率相反。</li>
+            <li>z 朝上為正,κ > 0 是碗形。z 是從哪一面量的會影響正負號;要談壓應力或張應力前,先確認量測面。</li>
+          </ul>
+        </details>
+      </section>
+    </div>
+    <div class="resActions">
+      <button id="res3D" class="primary" type="button">看 3D 形貌</button>
+      <button id="resCsv" type="button">下載數值 CSV</button>
+    </div>
   </div>
 </div>
 
@@ -123,6 +311,7 @@
   <div id="c3d"></div>
   <div id="panelLabels"></div>
   <div id="viewTop">
+    <button id="btnViewBack" type="button">← 返回</button>
     <div class="meta">
       <b id="mName">—</b><br>
       <span id="mInfo">—</span>
@@ -12275,12 +12464,1922 @@ global.WaferReport = {
 
 </script>
 <script>
+/* 數值基礎:最小平方、線性方程、中位數、最近鄰。
+ * 內嵌進單一 HTML,不能依賴外部函式庫;node 測試也載入同一份,跟 Python 版比對數字。
+ * 矩陣一律以「欄」存:cols[j] 是長度 m 的 Float64Array。
+ */
+(function (root) {
+  'use strict';
+  var core = root.WaferCore = root.WaferCore || {};
+
+  function dot(a, b, from) {
+    var s = 0;
+    for (var i = from || 0; i < a.length; i++) s += a[i] * b[i];
+    return s;
+  }
+
+  /* Householder QR。回傳上三角 R(n×n,列優先)與 applyQt(y):算 Qᵀy。 */
+  function qrFactor(cols) {
+    var n = cols.length, m = cols[0].length, R = new Float64Array(n * n), reflectors = [], j, k, i;
+    var work = cols.map(function (c) { return Float64Array.from(c); });
+    function reflect(v, vv, y, start) {
+      if (vv === 0) return;
+      var t = 0;
+      for (var a = start; a < m; a++) t += v[a] * y[a];
+      t = 2 * t / vv;
+      for (a = start; a < m; a++) y[a] -= t * v[a];
+    }
+    for (j = 0; j < n; j++) {
+      var col = work[j], norm = Math.sqrt(dot(col, col, j));
+      var alpha = col[j] > 0 ? -norm : norm;
+      var v = new Float64Array(m), vv;
+      for (i = j; i < m; i++) v[i] = col[i];
+      v[j] -= alpha;
+      vv = dot(v, v, j);
+      for (k = j; k < n; k++) reflect(v, vv, work[k], j);
+      for (k = j; k < n; k++) R[j * n + k] = work[k][j];
+      reflectors.push({ v: v, vv: vv, start: j });
+    }
+    return {
+      R: R, n: n, m: m,
+      applyQt: function (y) {
+        var out = Float64Array.from(y);
+        for (var r = 0; r < reflectors.length; r++)
+          reflect(reflectors[r].v, reflectors[r].vv, out, reflectors[r].start);
+        return out;
+      }
+    };
+  }
+
+  /* 設計矩陣退化時 R 的對角線會有接近 0 的項 */
+  function isFullRank(qr) {
+    var big = 0, small = Infinity;
+    for (var i = 0; i < qr.n; i++) {
+      var d = Math.abs(qr.R[i * qr.n + i]);
+      if (d > big) big = d;
+      if (d < small) small = d;
+    }
+    return big > 0 && small > 1e-12 * big;
+  }
+
+  /* 解 R c = b(只用 b 的前 n 個) */
+  function solveUpper(R, n, b) {
+    var c = new Float64Array(n);
+    for (var i = n - 1; i >= 0; i--) {
+      var s = b[i];
+      for (var j = i + 1; j < n; j++) s -= R[i * n + j] * c[j];
+      c[i] = s / R[i * n + i];
+    }
+    return c;
+  }
+
+  /* 解 Rᵀ w = d,寫進 w。標準誤要對每個點解一次,所以不另外配置記憶體。 */
+  function solveUpperTranspose(R, n, d, w) {
+    for (var i = 0; i < n; i++) {
+      var s = d[i];
+      for (var j = 0; j < i; j++) s -= R[j * n + i] * w[j];
+      w[i] = s / R[i * n + i];
+    }
+  }
+
+  function lstsq(cols, y) {
+    var qr = qrFactor(cols);
+    return solveUpper(qr.R, qr.n, qr.applyQt(y));
+  }
+
+  /* 高斯消去(部分選主元)。A 是 n×n 列優先,會被改寫。主元為 0 時回傳 null,等同 numpy 的 LinAlgError。 */
+  function solveLinear(A, b, n) {
+    var x = Float64Array.from(b), i, j, k;
+    for (i = 0; i < n; i++) {
+      var piv = i, big = Math.abs(A[i * n + i]);
+      for (k = i + 1; k < n; k++) {
+        var a = Math.abs(A[k * n + i]);
+        if (a > big) { big = a; piv = k; }
+      }
+      if (big === 0) return null;
+      if (piv !== i) {
+        for (j = i; j < n; j++) {
+          var t = A[i * n + j]; A[i * n + j] = A[piv * n + j]; A[piv * n + j] = t;
+        }
+        t = x[i]; x[i] = x[piv]; x[piv] = t;
+      }
+      for (k = i + 1; k < n; k++) {
+        var f = A[k * n + i] / A[i * n + i];
+        if (f === 0) continue;
+        for (j = i; j < n; j++) A[k * n + j] -= f * A[i * n + j];
+        x[k] -= f * x[i];
+      }
+    }
+    for (i = n - 1; i >= 0; i--) {
+      var s = x[i];
+      for (j = i + 1; j < n; j++) s -= A[i * n + j] * x[j];
+      x[i] = s / A[i * n + i];
+    }
+    return x;
+  }
+
+  function sorted(values) { return Float64Array.from(values).sort(); }
+
+  /* 與 numpy.median 相同:偶數個取中間兩個的平均 */
+  function median(values) {
+    var s = sorted(values), n = s.length;
+    if (!n) return NaN;
+    return n % 2 ? s[(n - 1) / 2] : 0.5 * (s[n / 2 - 1] + s[n / 2]);
+  }
+
+  /* 與 numpy.percentile 的預設(線性內插)相同 */
+  function percentile(values, q) {
+    var s = sorted(values), n = s.length;
+    if (!n) return NaN;
+    var pos = (q / 100) * (n - 1), lo = Math.floor(pos), hi = Math.min(n - 1, lo + 1);
+    return s[lo] + (s[hi] - s[lo]) * (pos - lo);
+  }
+
+  function mean(values) {
+    var s = 0;
+    for (var i = 0; i < values.length; i++) s += values[i];
+    return s / values.length;
+  }
+
+  /* 與 numpy.std / var 的預設相同(ddof=0) */
+  function variance(values) {
+    var m = mean(values), s = 0;
+    for (var i = 0; i < values.length; i++) s += (values[i] - m) * (values[i] - m);
+    return s / values.length;
+  }
+  function std(values) { return Math.sqrt(variance(values)); }
+
+  function pick(values, indices) {
+    var out = new Float64Array(indices.length);
+    for (var i = 0; i < indices.length; i++) out[i] = values[indices[i]];
+    return out;
+  }
+
+  /* 最近鄰:把點分進方格,從所在格往外一圈一圈找。回傳函式 query(i, k):不含自己、由近到遠。 */
+  function nearestNeighbours(x, y) {
+    var n = x.length, xmin = Infinity, xmax = -Infinity, ymin = Infinity, ymax = -Infinity, i;
+    for (i = 0; i < n; i++) {
+      if (x[i] < xmin) xmin = x[i]; if (x[i] > xmax) xmax = x[i];
+      if (y[i] < ymin) ymin = y[i]; if (y[i] > ymax) ymax = y[i];
+    }
+    var cell = Math.max(Math.sqrt((xmax - xmin) * (ymax - ymin) / Math.max(n, 1)),
+                        Math.max(xmax - xmin, ymax - ymin) / 4096, 1e-9);
+    var nx = Math.floor((xmax - xmin) / cell) + 1, ny = Math.floor((ymax - ymin) / cell) + 1;
+    var head = new Int32Array(nx * ny).fill(-1), next = new Int32Array(n);
+    function cx(i) { return Math.floor((x[i] - xmin) / cell); }
+    function cy(i) { return Math.floor((y[i] - ymin) / cell); }
+    for (i = 0; i < n; i++) {
+      var key = cy(i) * nx + cx(i);
+      next[i] = head[key]; head[key] = i;
+    }
+    function scanRing(i, ring, out) {
+      var c0 = cx(i), r0 = cy(i);
+      for (var r = Math.max(0, r0 - ring); r <= Math.min(ny - 1, r0 + ring); r++) {
+        var onEdge = r === r0 - ring || r === r0 + ring;
+        for (var c = Math.max(0, c0 - ring); c <= Math.min(nx - 1, c0 + ring); c++) {
+          if (!onEdge && c !== c0 - ring && c !== c0 + ring) continue;
+          for (var p = head[r * nx + c]; p >= 0; p = next[p]) {
+            if (p === i) continue;
+            var dx = x[p] - x[i], dy = y[p] - y[i];
+            out.push({ i: p, d2: dx * dx + dy * dy });
+          }
+        }
+      }
+    }
+    return function query(i, k) {
+      var found = [], maxRing = Math.max(nx, ny);
+      for (var ring = 0; ring <= maxRing; ring++) {
+        scanRing(i, ring, found);
+        if (found.length >= k) {
+          found.sort(function (a, b) { return a.d2 - b.d2; });
+          // 第 ring 圈之外的點距離至少 ring × cell,比第 k 近還遠才能停
+          if (found[k - 1].d2 <= ring * cell * ring * cell) break;
+        }
+      }
+      found.sort(function (a, b) { return a.d2 - b.d2; });
+      return found.slice(0, k);
+    };
+  }
+
+  /* 點與點的典型間距(最近鄰距離的中位數) */
+  function typicalSpacing(x, y) {
+    if (x.length < 2) return NaN;
+    var query = nearestNeighbours(x, y), d = new Float64Array(x.length);
+    for (var i = 0; i < x.length; i++) d[i] = Math.sqrt(query(i, 1)[0].d2);
+    return median(d);
+  }
+
+  function axisStep(values) {
+    var u = {}, list = [], i;
+    for (i = 0; i < values.length; i++) u[Math.round(values[i] * 1e6)] = 1;
+    for (var key in u) list.push(+key / 1e6);
+    if (list.length < 2) return 0;
+    list.sort(function (a, b) { return a - b; });
+    var diffs = new Float64Array(list.length - 1);
+    for (i = 1; i < list.length; i++) diffs[i - 1] = list[i] - list[i - 1];
+    return median(diffs);
+  }
+
+  /* 相鄰點之間可能的最大間距。兩個方向點距不同時,最近鄰只看得到比較密的方向。 */
+  function latticeSpacing(x, y) {
+    return Math.max(typicalSpacing(x, y), axisStep(x), axisStep(y));
+  }
+
+  core.linalg = {
+    dot: dot, qrFactor: qrFactor, isFullRank: isFullRank, solveUpper: solveUpper,
+    solveUpperTranspose: solveUpperTranspose, lstsq: lstsq, solveLinear: solveLinear,
+    median: median, percentile: percentile, mean: mean, variance: variance, std: std, pick: pick,
+    nearestNeighbours: nearestNeighbours, typicalSpacing: typicalSpacing, latticeSpacing: latticeSpacing
+  };
+})(typeof window !== 'undefined' ? window : global);
+
+</script>
+<script>
+/* 擬合 height map,從擬合式「解析地」算二次微分,不對原始資料做數值微分。
+ * 對應 warpage/surface.py,測試(tests/test_web_parity.py)逐欄比對兩邊的數字。
+ *
+ * 單位:x, y 是 mm、z 是 µm,所以二次微分是 µm/mm²;1 µm/mm² = 1 m⁻¹,數值上就是曲率。
+ * 網站只做多項式:全取的 Zernike 跟同階多項式是同一個函數空間,曲率完全相同。
+ */
+(function (root) {
+  'use strict';
+  var core = root.WaferCore = root.WaferCore || {};
+  var la = core.linalg;
+
+  function nTerms(degree) { return (degree + 1) * (degree + 2) / 2; }
+
+  /* 總階數 ≤ degree 的單項式,順序與 poly_basis 相同 */
+  function polyKeys(degree) {
+    var keys = [];
+    for (var n = 0; n <= degree; n++)
+      for (var j = 0; j <= n; j++) keys.push([n - j, j]);
+    return keys;
+  }
+
+  function falling(n, k) {
+    var out = 1;
+    for (var i = 0; i < k; i++) out *= n - i;
+    return out;
+  }
+
+  /* 設計矩陣;dx, dy 是對實際座標 (mm) 的微分次數,鏈鎖律已含在內 */
+  function design(keys, scale, x, y, dx, dy) {
+    dx = dx || 0; dy = dy || 0;
+    var n = x.length, top = 0, i, k;
+    for (k = 0; k < keys.length; k++) top = Math.max(top, keys[k][0], keys[k][1]);
+    var upow = [new Float64Array(n).fill(1)], vpow = [new Float64Array(n).fill(1)];
+    for (k = 1; k <= top; k++) {
+      var pu = new Float64Array(n), pv = new Float64Array(n);
+      for (i = 0; i < n; i++) {
+        pu[i] = upow[k - 1][i] * (x[i] / scale);
+        pv[i] = vpow[k - 1][i] * (y[i] / scale);
+      }
+      upow.push(pu); vpow.push(pv);
+    }
+    var chain = Math.pow(scale, dx + dy);
+    return keys.map(function (key) {
+      var col = new Float64Array(n);
+      if (key[0] < dx || key[1] < dy) return col;
+      var f = falling(key[0], dx) * falling(key[1], dy) / chain;
+      var a = upow[key[0] - dx], b = vpow[key[1] - dy];
+      for (var r = 0; r < n; r++) col[r] = f * a[r] * b[r];
+      return col;
+    });
+  }
+
+  function multiply(cols, coef) {
+    var out = new Float64Array(cols[0].length);
+    for (var j = 0; j < cols.length; j++) {
+      var c = coef[j], col = cols[j];
+      for (var i = 0; i < out.length; i++) out[i] += c * col[i];
+    }
+    return out;
+  }
+
+  function finiteIndices(z) {
+    var out = [];
+    for (var i = 0; i < z.length; i++) if (z[i] === z[i] && isFinite(z[i])) out.push(i);
+    return out;
+  }
+
+  function maxRadius(x, y) {
+    var r2 = 0;
+    for (var i = 0; i < x.length; i++) r2 = Math.max(r2, x[i] * x[i] + y[i] * y[i]);
+    return Math.sqrt(r2);
+  }
+
+  /* 最小平方擬合。回傳的 fit 可以 predict,也可以算任意線性組合的標準誤。 */
+  function fitSurface(xIn, yIn, zIn, opts) {
+    opts = opts || {};
+    var ok = finiteIndices(zIn), degree = opts.degree === undefined ? 4 : opts.degree;
+    var x = la.pick(xIn, ok), y = la.pick(yIn, ok), z = la.pick(zIn, ok);
+    var scale = opts.scale || (x.length ? maxRadius(x, y) : 1);
+    var keys = polyKeys(degree), p = keys.length;
+    if (x.length <= p) throw new Error('點數 ' + x.length + ' 不足以擬合 ' + p + ' 項(' + degree + ' 階)。');
+    var qr = la.qrFactor(design(keys, scale, x, y));
+    if (!la.isFullRank(qr)) throw new Error('點數 ' + x.length + ' 或分布不足以決定這 ' + p + ' 項。');
+    var coef = la.solveUpper(qr.R, p, qr.applyQt(z));
+    var fitted = multiply(design(keys, scale, x, y), coef), sse = 0;
+    for (var i = 0; i < z.length; i++) sse += (z[i] - fitted[i]) * (z[i] - fitted[i]);
+    return {
+      keys: keys, scale: scale, degree: degree, coef: coef, R: qr.R, nFit: x.length,
+      sigma: Math.sqrt(sse / (x.length - p)), rms: Math.sqrt(sse / x.length),
+      predict: function (px, py, dx, dy) { return multiply(design(keys, scale, px, py, dx, dy), coef); }
+    };
+  }
+
+  /* cols(N×p)每一列乘上係數之後的標準誤。假設雜訊獨立同分佈,是近似值。 */
+  function standardError(fit, cols) {
+    var p = cols.length, n = cols[0].length, out = new Float64Array(n);
+    var d = new Float64Array(p), w = new Float64Array(p);
+    for (var i = 0; i < n; i++) {
+      for (var j = 0; j < p; j++) d[j] = cols[j][i];
+      la.solveUpperTranspose(fit.R, p, d, w);
+      out[i] = fit.sigma * Math.sqrt(la.dot(w, w));
+    }
+    return out;
+  }
+
+  function addCols(a, b) {
+    return a.map(function (col, j) {
+      var out = new Float64Array(col.length);
+      for (var i = 0; i < col.length; i++) out[i] = col[i] + b[j][i];
+      return out;
+    });
+  }
+
+  /* 最大斜率(無因次)。z 是 µm、x 是 mm,所以要乘 1e-3。 */
+  function maxSlope(fit, x, y) {
+    if (!x.length) return 0;
+    var gx = fit.predict(x, y, 1, 0), gy = fit.predict(x, y, 0, 1), best = 0;
+    for (var i = 0; i < x.length; i++) best = Math.max(best, gx[i] * gx[i] + gy[i] * gy[i]);
+    return 1e-3 * Math.sqrt(best);
+  }
+
+  /* ∂²z/∂x²、∂²z/∂y²、∂²z/∂x∂y、Laplacian 與主曲率(1/m)。
+   * k1 ≥ k2 是定義,所以雜訊會讓平均 k1 偏正、平均 k2 偏負。 */
+  function curvatureMaps(fit, x, y) {
+    var n = x.length;
+    var gxx = design(fit.keys, fit.scale, x, y, 2, 0);
+    var gyy = design(fit.keys, fit.scale, x, y, 0, 2);
+    var gxy = design(fit.keys, fit.scale, x, y, 1, 1);
+    var zxx = multiply(gxx, fit.coef), zyy = multiply(gyy, fit.coef), zxy = multiply(gxy, fit.coef);
+    var lap = new Float64Array(n), k1 = new Float64Array(n), k2 = new Float64Array(n), tensorSe = new Float64Array(n);
+    var seXx = standardError(fit, gxx), seYy = standardError(fit, gyy), seXy = standardError(fit, gxy);
+    for (var i = 0; i < n; i++) {
+      var m = 0.5 * (zxx[i] + zyy[i]);
+      var rootTerm = Math.sqrt(0.25 * (zxx[i] - zyy[i]) * (zxx[i] - zyy[i]) + zxy[i] * zxy[i]);
+      lap[i] = zxx[i] + zyy[i];
+      k1[i] = m + rootTerm;
+      k2[i] = m - rootTerm;
+      tensorSe[i] = Math.sqrt(seXx[i] * seXx[i] + seYy[i] * seYy[i] + 2 * seXy[i] * seXy[i]);
+    }
+    return {
+      zxx: zxx, zyy: zyy, zxy: zxy, laplacian: lap, k1: k1, k2: k2,
+      laplacianSe: standardError(fit, addCols(gxx, gyy)), tensorSe: tensorSe, maxSlope: maxSlope(fit, x, y)
+    };
+  }
+
+  /* 只算階數掃描需要的 Laplacian 與它的標準誤,高階時省很多時間 */
+  function laplacianOnly(fit, x, y) {
+    var g = addCols(design(fit.keys, fit.scale, x, y, 2, 0), design(fit.keys, fit.scale, x, y, 0, 2));
+    return { laplacian: multiply(g, fit.coef), laplacianSe: standardError(fit, g) };
+  }
+
+  /* 只有十幾個數時插入排序最快,而且不必每個點都配置一次記憶體。會改動 a。 */
+  function smallMedian(a) {
+    var n = a.length;
+    for (var i = 1; i < n; i++) {
+      var v = a[i], j = i - 1;
+      while (j >= 0 && a[j] > v) { a[j + 1] = a[j]; j--; }
+      a[j + 1] = v;
+    }
+    return n % 2 ? a[(n - 1) / 2] : 0.5 * (a[n / 2 - 1] + a[n / 2]);
+  }
+
+  /* 一輪鄰居比較:回傳新的 keep。門檻取「全片雜訊」與「這點鄰居自己的分散」較大者(Hampel)。 */
+  function spikeRound(res, neighbours, sigma, floor) {
+    var n = res.length, center = new Float64Array(n), localSpread = new Float64Array(n), dev = new Float64Array(n), i, j;
+    var k = neighbours[0].length, around = new Float64Array(k), absDev = new Float64Array(k);
+    for (i = 0; i < n; i++) {
+      for (j = 0; j < k; j++) around[j] = res[neighbours[i][j]];
+      center[i] = smallMedian(around);
+      for (j = 0; j < k; j++) absDev[j] = Math.abs(around[j] - center[i]);
+      localSpread[i] = 1.4826 * smallMedian(absDev);
+      dev[i] = res[i] - center[i];
+    }
+    var devMedian = la.median(dev), spreadValues = new Float64Array(n);
+    for (i = 0; i < n; i++) spreadValues[i] = Math.abs(dev[i] - devMedian);
+    var spread = Math.max(1.4826 * la.median(spreadValues), floor), keep = new Uint8Array(n);
+    for (i = 0; i < n; i++) keep[i] = Math.abs(dev[i]) <= sigma * Math.max(spread, localSpread[i]) ? 1 : 0;
+    return keep;
+  }
+
+  /* 找孤立突波,回傳與輸入同長的 Uint8Array。
+   * 不對全域擬合做 sigma-clip:那會把真的局部應力砍掉。這裡看的是「這點跟周圍鄰居差多少」,
+   * 局部應力區的相鄰點會一起變,突波不會。先扣低階擬合再比,否則斜率大的邊緣會整圈被誤判。 */
+  function findSpikes(xIn, yIn, zIn, opts) {
+    opts = opts || {};
+    var sigma = opts.sigma === undefined ? 5 : opts.sigma, nb = 12, pre = 4;
+    var out = new Uint8Array(zIn.length), ok = finiteIndices(zIn);
+    if (ok.length < nb + 2) return out;
+    var x = la.pick(xIn, ok), y = la.pick(yIn, ok), z = la.pick(zIn, ok), n = ok.length, i;
+    var degree = n >= 3 * nTerms(pre) ? pre : 1, query = la.nearestNeighbours(x, y), neighbours = new Array(n);
+    for (i = 0; i < n; i++) neighbours[i] = query(i, nb).map(function (f) { return f.i; });
+    var floor = 1e-6 * Math.max(la.percentile(z, 99) - la.percentile(z, 1), 1e-12);
+    var keep = new Uint8Array(n).fill(1), res = new Float64Array(n);
+    for (var round = 0; round < 3; round++) {
+      var kept = [];
+      for (i = 0; i < n; i++) if (keep[i]) kept.push(i);
+      var fitted = fitSurface(la.pick(x, kept), la.pick(y, kept), la.pick(z, kept), { degree: degree }).predict(x, y);
+      for (i = 0; i < n; i++) res[i] = z[i] - fitted[i];
+      var fresh = spikeRound(res, neighbours, sigma, floor), same = true;
+      for (i = 0; i < n; i++) if (fresh[i] !== keep[i]) { same = false; break; }
+      if (same) break;
+      keep = fresh;
+    }
+    for (i = 0; i < n; i++) if (!keep[i]) out[ok[i]] = 1;
+    return out;
+  }
+
+  /* 最佳碗形(含 tilt),殘差 = z − predict。
+   * paraboloid 等向拋物面,對應均勻、等向的應力;quadric 允許不等向與馬鞍(曲率張量是常數的面都會被扣掉)。
+   * Python 版另有 sphere,跟拋物面差不到 0.01 µm,網站不做。 */
+  function fitReference(xIn, yIn, zIn, model) {
+    var ok = finiteIndices(zIn), x = la.pick(xIn, ok), y = la.pick(yIn, ok), z = la.pick(zIn, ok);
+    var quadric = model === 'quadric', n = x.length, i;
+    if (!quadric && model !== 'paraboloid') throw new Error('未知的參考面 ' + model);
+    var cols = [new Float64Array(n).fill(1), x, y];
+    if (quadric) {
+      var xx = new Float64Array(n), yy = new Float64Array(n), xy = new Float64Array(n);
+      for (i = 0; i < n; i++) { xx[i] = 0.5 * x[i] * x[i]; yy[i] = 0.5 * y[i] * y[i]; xy[i] = x[i] * y[i]; }
+      cols.push(xx, yy, xy);
+    } else {
+      var rr = new Float64Array(n);
+      for (i = 0; i < n; i++) rr[i] = 0.5 * (x[i] * x[i] + y[i] * y[i]);
+      cols.push(rr);
+    }
+    var c = la.lstsq(cols, z);
+    return {
+      model: model, coef: c, kappa: quadric ? 0.5 * (c[3] + c[4]) : c[3],
+      predict: function (px, py) {
+        var out = new Float64Array(px.length);
+        for (var r = 0; r < px.length; r++) {
+          var a = px[r], b = py[r];
+          out[r] = c[0] + c[1] * a + c[2] * b +
+            (quadric ? 0.5 * c[3] * a * a + 0.5 * c[4] * b * b + c[5] * a * b : 0.5 * c[3] * (a * a + b * b));
+        }
+        return out;
+      }
+    };
+  }
+
+  /* 固定種子的 Fisher–Yates:同一份資料每次得到同一個建議階數 */
+  function seededPermutation(n, seed) {
+    var state = seed >>> 0, order = new Int32Array(n), i;
+    function next() {
+      state = (state + 0x6D2B79F5) >>> 0;
+      var t = Math.imul(state ^ (state >>> 15), 1 | state);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    }
+    for (i = 0; i < n; i++) order[i] = i;
+    for (i = n - 1; i > 0; i--) {
+      var j = Math.floor(next() * (i + 1)), t = order[i];
+      order[i] = order[j]; order[j] = t;
+    }
+    return order;
+  }
+
+  /* 交叉驗證整塊整塊地留出(邊長 R/4):隨機留點時鄰居都還在,高階多項式靠內插就能過關。 */
+  function blockFolds(x, y, scale, folds) {
+    var block = scale / 4, labels = {}, count = 0, cell = new Int32Array(x.length), i;
+    for (i = 0; i < x.length; i++) {
+      var key = Math.floor(x[i] / block) + ',' + Math.floor(y[i] / block);
+      if (labels[key] === undefined) labels[key] = count++;
+      cell[i] = labels[key];
+    }
+    var perm = seededPermutation(count, 1), out = new Int32Array(x.length);
+    for (i = 0; i < x.length; i++) out[i] = perm[cell[i]] % folds;
+    return out;
+  }
+
+  /* AᵀA 與 Aᵀz(列優先)。每一折只扣掉留出的部分,不必重算整個矩陣。 */
+  function normalEquations(a, z, rows) {
+    var p = a.length, ata = new Float64Array(p * p), atz = new Float64Array(p), r, i, j;
+    for (i = 0; i < p; i++) {
+      var ci = a[i], s = 0;
+      for (r = 0; r < rows.length; r++) s += ci[rows[r]] * z[rows[r]];
+      atz[i] = s;
+      for (j = i; j < p; j++) {
+        var cj = a[j];
+        s = 0;
+        for (r = 0; r < rows.length; r++) s += ci[rows[r]] * cj[rows[r]];
+        ata[i * p + j] = s; ata[j * p + i] = s;
+      }
+    }
+    return { ata: ata, atz: atz };
+  }
+
+  function foldErrors(a, z, fold, folds) {
+    var n = z.length, p = a.length, all = [], rows = [], out = [], i, f;
+    for (i = 0; i < folds; i++) rows.push([]);
+    for (i = 0; i < n; i++) { all.push(i); rows[fold[i]].push(i); }
+    var full = normalEquations(a, z, all);
+    for (f = 0; f < folds; f++) {
+      var test = rows[f];
+      if (!test.length || n - test.length <= p) continue;
+      var held = normalEquations(a, z, test), A = new Float64Array(p * p), b = new Float64Array(p);
+      for (i = 0; i < p * p; i++) A[i] = full.ata[i] - held.ata[i];
+      for (i = 0; i < p; i++) b[i] = full.atz[i] - held.atz[i];
+      var coef = la.solveLinear(A, b, p);
+      if (!coef) continue;   // 留出之後剩下的點決定不了這麼多項
+      var sse = 0;
+      for (i = 0; i < test.length; i++) {
+        var pred = 0;
+        for (var j = 0; j < p; j++) pred += a[j][test[i]] * coef[j];
+        sse += (pred - z[test[i]]) * (pred - z[test[i]]);
+      }
+      out.push(Math.sqrt(sse / test.length));
+    }
+    return out;
+  }
+
+  function sampleStdErr(values) {
+    if (values.length < 2) return 0;
+    var m = la.mean(values), s = 0;
+    for (var i = 0; i < values.length; i++) s += (values[i] - m) * (values[i] - m);
+    return Math.sqrt(s / (values.length - 1)) / Math.sqrt(values.length);
+  }
+
+  /* 各階數的擬合誤差、交叉驗證誤差與曲率雜訊,回答「資料撐得起幾階」。
+   * 取誤差在最佳值一個標準誤內的最低階,因為階數越高二次微分的雜訊放大越快。 */
+  function degreeSweep(xIn, yIn, zIn, opts) {
+    opts = opts || {};
+    var folds = 5, ok = finiteIndices(zIn), x = la.pick(xIn, ok), y = la.pick(yIn, ok), z = la.pick(zIn, ok);
+    var scale = maxRadius(x, y), degrees = opts.degrees || [2, 3, 4, 5, 6, 8, 10];
+    var fold = opts.fold || blockFolds(x, y, scale, folds);
+    var out = { degrees: [], rmseFit: [], rmseCv: [], rmseCvSe: [], laplacianStd: [], laplacianSeRms: [] };
+    degrees.forEach(function (degree) {
+      if (nTerms(degree) * 3 > x.length) return;
+      var fit = fitSurface(x, y, z, { degree: degree, scale: scale });
+      var errors = foldErrors(design(fit.keys, scale, x, y), z, fold, folds);
+      if (!errors.length) return;
+      var lap = laplacianOnly(fit, x, y), se2 = 0;
+      for (var i = 0; i < lap.laplacianSe.length; i++) se2 += lap.laplacianSe[i] * lap.laplacianSe[i];
+      out.degrees.push(degree);
+      out.rmseFit.push(fit.rms);
+      out.rmseCv.push(la.mean(errors));
+      out.rmseCvSe.push(sampleStdErr(errors));
+      out.laplacianStd.push(la.std(lap.laplacian));
+      out.laplacianSeRms.push(Math.sqrt(se2 / lap.laplacianSe.length));
+    });
+    if (!out.degrees.length) throw new Error('點數 ' + x.length + ' 太少,沒有任何階數可以掃描。');
+    var best = 0, j;
+    for (j = 1; j < out.rmseCv.length; j++) if (out.rmseCv[j] < out.rmseCv[best]) best = j;
+    var limit = out.rmseCv[best] + out.rmseCvSe[best];
+    for (j = 0; j < out.degrees.length; j++) if (out.rmseCv[j] <= limit) { out.recommended = out.degrees[j]; break; }
+    return out;
+  }
+
+  core.surface = {
+    nTerms: nTerms, fitSurface: fitSurface, curvatureMaps: curvatureMaps, maxSlope: maxSlope,
+    findSpikes: findSpikes, fitReference: fitReference, degreeSweep: degreeSweep
+  };
+})(typeof window !== 'undefined' ? window : global);
+
+</script>
+<script>
+/* 把一張 height map 算成曲率、殘差與診斷。對應 warpage/pipeline.py 只有 height 的部分。
+ * analyze 只計算,不碰畫面。map = {x, y, z(µm), radius(mm), flat, unitDeclared},座標原點必須是晶圓中心。
+ */
+(function (root) {
+  'use strict';
+  var core = root.WaferCore = root.WaferCore || {};
+  var la = core.linalg, sf = core.surface;
+
+  var MAX_PILEUP_FRACTION = 0.2;       // 單一數值超過這個比例,當成量測失敗而不是真的那麼平
+  var MIN_VALID_POINTS = 10;
+  var MAX_SPIKE_FRACTION = 0.02;
+  var MIN_ON_WAFER_OFF_CENTRE = 0.5;   // 資料偏心時門檻高:原點在角落也還有 1/5 的點落在圓內
+  var MIN_ON_WAFER = 0.05;             // 沒偏心時門檻低:只有單位錯了才會少到這樣
+  var WHOLE_WAFER_SPAN = 0.85;         // 資料範圍/晶圓直徑
+  var HEIGHT_PILEUP_WARNING = 0.02;
+  var PILEUP_DOMINANCE = 3;            // 量化的資料第二常見的值會差不多多,填值不會
+  var EPS_R = 1e-9;
+
+  /* 資料本身有問題,分析下去只會得到看似合理的錯誤數字。畫面用它區分「檔案壞了」跟「程式錯了」。 */
+  function DataError(message) { var e = new Error(message); e.isDataError = true; return e; }
+
+  function channelQuality(values) {
+    var finite = [], i;
+    for (i = 0; i < values.length; i++) if (isFinite(values[i])) finite.push(values[i]);
+    var q = { nFinite: finite.length, value: NaN, fraction: 0, runnerUp: 0 };
+    if (!finite.length) return q;
+    var s = Float64Array.from(finite).sort(), best = 0, second = 0, run = 1;
+    for (i = 1; i <= s.length; i++) {
+      if (i < s.length && s[i] === s[i - 1]) { run++; continue; }
+      if (run > best) { second = best; best = run; q.value = s[i - 1]; }
+      else if (run > second) second = run;
+      run = 1;
+    }
+    q.fraction = best / s.length;
+    q.runnerUp = second / s.length;
+    return q;
+  }
+
+  function ptp(v) {
+    var lo = Infinity, hi = -Infinity;
+    for (var i = 0; i < v.length; i++) { if (v[i] < lo) lo = v[i]; if (v[i] > hi) hi = v[i]; }
+    return hi - lo;
+  }
+  function bboxCentre(x, y) {
+    var lox = Infinity, hix = -Infinity, loy = Infinity, hiy = -Infinity;
+    for (var i = 0; i < x.length; i++) {
+      if (x[i] < lox) lox = x[i]; if (x[i] > hix) hix = x[i];
+      if (y[i] < loy) loy = y[i]; if (y[i] > hiy) hiy = y[i];
+    }
+    return [0.5 * (lox + hix), 0.5 * (loy + hiy)];
+  }
+  function fmt(v, digits) { return Number(v).toPrecision(digits || 3).replace(/\.?0+(e|$)/, '$1'); }
+
+  /* 分析假設原點就是晶圓中心、座標單位是 mm。錯了不會當掉,只會默默算錯,
+   * 所以對不上太多就擋下,差一點只提醒。只量部分晶圓時看不出原點對不對,也不給平移建議。 */
+  function checkGeometry(x, y, radius) {
+    if (!x.length) return [];
+    var c = bboxCentre(x, y), inside = 0, i, reach = 0;
+    for (i = 0; i < x.length; i++) {
+      var r = Math.sqrt(x[i] * x[i] + y[i] * y[i]);
+      if (r <= radius + EPS_R) inside++;
+      if (r > reach) reach = r;
+    }
+    var onWafer = inside / x.length;
+    var limit = Math.max(2 * la.latticeSpacing(x, y), 0.05 * radius);
+    var offCentre = Math.sqrt(c[0] * c[0] + c[1] * c[1]) > limit;
+    var whole = Math.min(ptp(x), ptp(y)) >= WHOLE_WAFER_SPAN * 2 * radius;
+    var at = '(' + fmt(c[0]) + ', ' + fmt(c[1]) + ') mm';
+    if (offCentre && onWafer < MIN_ON_WAFER_OFF_CENTRE)
+      throw DataError('只有 ' + Math.round(onWafer * 100) + '% 的點落在半徑 ' + fmt(radius) + ' mm 內,資料中心在 ' + at +
+        ',原點看來不是晶圓中心。請在電腦端設定晶圓中心後重傳。');
+    if (onWafer < MIN_ON_WAFER)
+      throw DataError('只有 ' + (onWafer * 100).toFixed(1) + '% 的點落在半徑 ' + fmt(radius) + ' mm 內,資料延伸到 r = ' +
+        fmt(reach) + ':座標單位或晶圓尺寸可能不對。');
+    if (!offCentre) return [];
+    if (whole) return ['資料中心在 ' + at + ',不是原點。邊緣排除假設原點是晶圓中心,請在電腦端確認晶圓中心。'];
+    return ['資料只涵蓋部分晶圓(' + fmt(ptp(x)) + ' × ' + fmt(ptp(y)) + ' mm),看不出原點對不對,目前把原點當成晶圓中心。'];
+  }
+
+  /* 判斷曲率是不是幾乎常數。std/|mean| 單獨用有盲點,所以另外看整個曲率張量:
+   *   馬鞍形 Laplacian 平均≈0,比值爆掉,但張量其實是常數 → NEAR_CONSTANT
+   *   平晶圓比值也很大,但那些變化可能全是擬合雜訊 → UNRESOLVED
+   *   三葉、像散 ∇²z≡0,Laplacian 是平的,主曲率卻在變 → LAPLACIAN_FLAT */
+  function curvatureUniformity(cm, mask, cvThreshold, snrThreshold) {
+    var idx = [], i;
+    for (i = 0; i < mask.length; i++) if (mask[i]) idx.push(i);
+    var lap = la.pick(cm.laplacian, idx), mean = la.mean(lap), std = la.std(lap);
+    var cv = mean !== 0 ? std / Math.abs(mean) : Infinity, scale = 0, se2 = 0, tse2 = 0;
+    for (i = 0; i < idx.length; i++) {
+      var q = idx[i];
+      scale += Math.abs(cm.k1[q]) + Math.abs(cm.k2[q]);
+      se2 += cm.laplacianSe[q] * cm.laplacianSe[q];
+      tse2 += cm.tensorSe[q] * cm.tensorSe[q];
+    }
+    scale /= idx.length;
+    var tensorStd = Math.sqrt(la.variance(la.pick(cm.zxx, idx)) + la.variance(la.pick(cm.zyy, idx)) +
+                              2 * la.variance(la.pick(cm.zxy, idx)));
+    // 乘 √2 是為了讓 zxx、zyy 同步變化的碗形剛好等於 std/|mean|
+    var robustCv = scale > 0 ? Math.SQRT2 * tensorStd / scale : Infinity;
+    var seRms = Math.sqrt(se2 / idx.length), tensorSeRms = Math.sqrt(tse2 / idx.length);
+    var snr = seRms > 0 ? std / seRms : Infinity, tensorSnr = tensorSeRms > 0 ? tensorStd / tensorSeRms : Infinity;
+    var lapFlat = (scale > 0 ? std / scale : Infinity) < cvThreshold || snr < snrThreshold, state = 'VARIABLE';
+    if (robustCv < cvThreshold) state = 'NEAR_CONSTANT';
+    else if (tensorSnr < snrThreshold) state = 'UNRESOLVED';
+    else if (lapFlat) state = 'LAPLACIAN_FLAT';
+    return { mean: mean, std: std, cv: cv, robustCv: robustCv, seRms: seRms, snr: snr, tensorSnr: tensorSnr, state: state };
+  }
+
+  /* k1 ≥ k2 是定義,純雜訊也會讓平均 k1 偏正、k2 偏負,所以要明顯高於雜訊才算馬鞍 */
+  function classifyShape(k1, k2, seRms) {
+    var strong = 3 * seRms;
+    if (Math.max(Math.abs(k1), Math.abs(k2)) <= strong) return 'flat';
+    if (k1 > 0 && k2 < 0) return Math.min(k1, -k2) > Math.max(0.3 * Math.max(k1, -k2), strong) ? 'saddle' : 'mixed';
+    return k1 + k2 > 0 ? 'bowl' : 'dome';
+  }
+
+  function meanOver(values, mask) {
+    var s = 0, n = 0;
+    for (var i = 0; i < mask.length; i++) if (mask[i]) { s += values[i]; n++; }
+    return n ? s / n : NaN;
+  }
+
+  function buildMask(map, cfg) {
+    var n = map.z.length, keepR = map.radius - cfg.edgeExclusionMm;
+    var mask = new Uint8Array(n), zInside = new Float64Array(n), onWafer = [], nEdge = 0, nOutside = 0, i;
+    for (i = 0; i < n; i++) {
+      var r = Math.sqrt(map.x[i] * map.x[i] + map.y[i] * map.y[i]), finite = isFinite(map.z[i]);
+      var inside = r <= keepR + EPS_R, on = r <= map.radius + EPS_R;
+      zInside[i] = inside ? map.z[i] : NaN;
+      if (on) onWafer.push(i);
+      else nOutside++;
+      if (finite && on && !inside) nEdge++;
+    }
+    var spikes = cfg.spikeSigma === null ? new Uint8Array(n)
+      : sf.findSpikes(map.x, map.y, zInside, { sigma: cfg.spikeSigma });
+    var nSpikes = 0;
+    for (i = 0; i < n; i++) {
+      if (spikes[i]) nSpikes++;
+      mask[i] = isFinite(zInside[i]) && !spikes[i] ? 1 : 0;
+    }
+    return { mask: mask, spikes: spikes, nEdge: nEdge, nOutside: nOutside, nSpikes: nSpikes, onWafer: onWafer };
+  }
+
+  function checkQuality(map, onWafer) {
+    var q = channelQuality(la.pick(map.z, onWafer));
+    if (q.nFinite < MIN_VALID_POINTS) throw DataError('只有 ' + q.nFinite + ' 個有效點,無法分析。');
+    if (q.fraction > MAX_PILEUP_FRACTION)
+      throw DataError((q.fraction * 100).toFixed(1) + '% 的點都剛好等於 ' + fmt(q.value, 4) +
+        ',這通常代表量測失敗或資料被填值,不是晶圓真的那麼平。請檢查原始量測。');
+    var notes = [];
+    if (q.fraction > HEIGHT_PILEUP_WARNING && q.fraction > PILEUP_DOMINANCE * q.runnerUp)
+      notes.push('晶圓內有 ' + (q.fraction * 100).toFixed(1) + '% 的點都等於 ' + fmt(q.value, 4) +
+        ',可能是填值。這些點還在擬合裡,一小塊就足以讓曲率差很多,請把它們改成 NaN。');
+    return notes;
+  }
+
+  function heightNotes(cfg, built, nFinite, dataRmax, keepR, sweep, cm, shape, k1, k2) {
+    var notes = [];
+    if (built.nEdge === 0 && cfg.edgeExclusionMm > 0)
+      notes.push('邊緣排除 ' + fmt(cfg.edgeExclusionMm) + ' mm 沒有去掉任何點:資料本來就只到 r = ' + dataRmax.toFixed(2) +
+        ' mm(上限 ' + keepR.toFixed(2) + ' mm),多半已被量測機排除。');
+    if (nFinite && built.nSpikes / nFinite > MAX_SPIKE_FRACTION)
+      notes.push(built.nSpikes + ' 個突波(' + (built.nSpikes / nFinite * 100).toFixed(1) + '%)異常地多,請檢查原始 map。');
+    if (sweep && sweep.recommended !== cfg.degree)
+      notes.push('階數掃描建議 ' + sweep.recommended + ' 階,這次用的是 ' + cfg.degree + ' 階。');
+    if (1.5 * cm.maxSlope * cm.maxSlope > 0.01)
+      notes.push('最大斜率 ' + fmt(cm.maxSlope) + ':小斜率近似的曲率誤差可達 ' + (150 * cm.maxSlope * cm.maxSlope).toFixed(1) + '%。');
+    if (shape === 'saddle' && cfg.residualModel !== 'quadric')
+      notes.push('這片是馬鞍形(κ1 = ' + fmt(k1) + '、κ2 = ' + fmt(k2) + ' 1/m),等向碗形扣不掉馬鞍,殘差會留著它。可以把參考面改成「含馬鞍」。');
+    return notes;
+  }
+
+  function subtract(z, pred, mask) {
+    var out = new Float64Array(z.length);
+    for (var i = 0; i < z.length; i++) out[i] = mask[i] ? z[i] - pred[i] : NaN;
+    return out;
+  }
+
+  function normalizeConfig(cfg) {
+    cfg = cfg || {};
+    return {
+      degree: cfg.degree === undefined ? 4 : cfg.degree,
+      residualModel: cfg.residualModel || 'paraboloid',
+      edgeExclusionMm: cfg.edgeExclusionMm === undefined ? 3 : cfg.edgeExclusionMm,
+      spikeSigma: cfg.spikeSigma === undefined ? 5 : cfg.spikeSigma,
+      cvThreshold: cfg.cvThreshold === undefined ? 0.1 : cfg.cvThreshold,
+      snrThreshold: cfg.snrThreshold === undefined ? 3 : cfg.snrThreshold,
+      sweepDegrees: cfg.sweepDegrees === undefined ? [2, 3, 4, 5, 6, 8, 10] : cfg.sweepDegrees,
+      sweepFold: cfg.sweepFold || null,
+      sweep: cfg.sweep || null   // 只換階數或參考面時點沒變,不必重掃
+    };
+  }
+
+  function finitePoints(map) {
+    var idx = [];
+    for (var i = 0; i < map.z.length; i++) if (isFinite(map.z[i])) idx.push(i);
+    return idx;
+  }
+
+  function maskedArrays(map, mask) {
+    var idx = [];
+    for (var i = 0; i < mask.length; i++) if (mask[i]) idx.push(i);
+    return { idx: idx, x: la.pick(map.x, idx), y: la.pick(map.y, idx), z: la.pick(map.z, idx) };
+  }
+
+  function runSweep(m, cfg, notes) {
+    if (cfg.sweep) return cfg.sweep;
+    if (!cfg.sweepDegrees || !cfg.sweepDegrees.length) return null;
+    try { return sf.degreeSweep(m.x, m.y, m.z, { degrees: cfg.sweepDegrees, fold: cfg.sweepFold }); }
+    catch (e) { notes.push('點數太少(' + m.x.length + ' 點),略過階數掃描。'); return null; }
+  }
+
+  function dataExtent(map, finite) {
+    var rmax = 0;
+    for (var i = 0; i < finite.length; i++) {
+      var q = finite[i], r = Math.sqrt(map.x[q] * map.x[q] + map.y[q] * map.y[q]);
+      if (r <= map.radius + EPS_R && r > rmax) rmax = r;
+    }
+    return rmax;
+  }
+
+  function analyze(map, config) {
+    var cfg = normalizeConfig(config);
+    if (!map.radius) throw DataError('缺晶圓半徑,算不出曲率:不從資料範圍猜,那會讓邊緣排除默默失效。');
+    if (cfg.degree < 2) throw new Error('階數至少要 2 才有曲率。');
+    var keepR = map.radius - cfg.edgeExclusionMm;
+    if (keepR <= 0) throw DataError('邊緣排除 ' + cfg.edgeExclusionMm + ' mm 超過晶圓半徑 ' + map.radius + ' mm。');
+
+    var finite = finitePoints(map);
+    var notes = checkGeometry(la.pick(map.x, finite), la.pick(map.y, finite), map.radius);
+    var built = buildMask(map, cfg);
+    notes = notes.concat(map.notes || [], checkQuality(map, built.onWafer));
+    if (!map.unitDeclared) notes.push('高度欄位沒有宣告單位,目前當成 µm;如果其實不是 µm,曲率的數字就不對。');
+    if (map.fromImage) notes.push('這份資料是從截圖的顏色反推的,精度不足以算二次微分,曲率只能參考。');
+
+    var mask = built.mask, m = maskedArrays(map, mask);
+    var fit = sf.fitSurface(m.x, m.y, m.z, { degree: cfg.degree, scale: keepR });
+    var curvature = sf.curvatureMaps(fit, map.x, map.y);
+    // 斜率只看有擬合資料的範圍;排除區是外插,高階時會大得沒有意義
+    curvature.maxSlope = sf.maxSlope(fit, m.x, m.y);
+    var uniformity = curvatureUniformity(curvature, mask, cfg.cvThreshold, cfg.snrThreshold);
+    var reference = sf.fitReference(m.x, m.y, m.z, cfg.residualModel);
+    var residual = subtract(map.z, reference.predict(map.x, map.y), mask);
+    var plane = sf.fitSurface(m.x, m.y, m.z, { degree: 1, scale: keepR });
+    var leveled = subtract(map.z, plane.predict(map.x, map.y), mask);
+    var sweep = runSweep(m, cfg, notes);
+
+    var k1 = meanOver(curvature.k1, mask), k2 = meanOver(curvature.k2, mask);
+    var shape = classifyShape(k1, k2, uniformity.seRms);
+    notes = notes.concat(heightNotes(cfg, built, finite.length, dataExtent(map, finite), keepR,
+                                     sweep, curvature, shape, k1, k2));
+    return {
+      config: cfg, radius: map.radius, keepRadius: keepR, mask: mask, spikes: built.spikes,
+      nUsed: m.x.length, nTotal: map.z.length, nEdge: built.nEdge, nOutside: built.nOutside, nSpikes: built.nSpikes,
+      nTerms: sf.nTerms(cfg.degree), dof: cfg.degree * (cfg.degree - 1) / 2,
+      fit: fit, curvature: curvature, uniformity: uniformity, reference: reference,
+      residual: residual, leveled: leveled, sweep: sweep, shape: shape, k1Mean: k1, k2Mean: k2,
+      zxxMean: meanOver(curvature.zxx, mask), zyyMean: meanOver(curvature.zyy, mask),
+      zxyMean: meanOver(curvature.zxy, mask), notes: notes
+    };
+  }
+
+  /* 階數掃描是最花時間的一步,畫面可以先顯示結果、之後再用這個補上。 */
+  function attachSweep(res, map) {
+    var m = maskedArrays(map, res.mask), notes = res.notes.slice();
+    res.sweep = runSweep(m, { sweep: null, sweepDegrees: [2, 3, 4, 5, 6, 8, 10], sweepFold: null }, notes);
+    res.sweepSkipped = !res.sweep;
+    if (res.sweep && res.sweep.recommended !== res.config.degree)
+      notes.push('階數掃描建議 ' + res.sweep.recommended + ' 階,這次用的是 ' + res.config.degree + ' 階。');
+    res.notes = notes;
+    return res;
+  }
+
+  /* 給人看的判讀。文字跟著 warpage/report.py 的 _VERDICT 走,數字由呼叫端顯示。 */
+  var VERDICT = {
+    NEAR_CONSTANT: { title: '曲率幾乎固定', body: '這片接近均勻彎曲,曲率圖上看到的起伏多半只是擬合雜訊。之後跟 PL 比對時,相關性低是預期中的結果,不代表應力沒有影響。' },
+    UNRESOLVED: { title: '曲率變化沒有明顯超過雜訊', body: '曲率圖上的圖樣可能有一部分是雜訊。std/|mean| 大也不代表應力不均,要用別片或高一點的訊噪比驗證。' },
+    LAPLACIAN_FLAT: { title: 'Laplacian 幾乎固定,主曲率有變化', body: '常見於三葉、像散這類 ∇²z = 0 的形狀。看形狀時請看 κ1、κ2,不要只看 Laplacian。' },
+    VARIABLE: { title: '曲率有超過雜訊的空間變化', body: '這片的曲率不是均勻的,而且變化大於擬合雜訊,曲率圖上的圖樣可以解讀。' }
+  };
+  var SHAPE = { bowl: '碗形', dome: '穹頂形', saddle: '馬鞍形', mixed: '形狀混合', flat: '曲率在雜訊以內' };
+
+  /* 跟 Python 版 summary.csv 同樣的欄位,方便對照。全 ASCII:Excel 開 UTF-8 無 BOM 會亂碼。 */
+  function summaryCsv(res, name) {
+    // 檔名是使用者取的:逗號會多出一欄,開頭的 = + - @ 在 Excel 裡會被當公式執行
+    function ascii(s) { return String(s).replace(/[^\x20-\x7e]/g, '?').replace(/[",]/g, '_').replace(/^[=+\-@]/, "'$&"); }
+    function num(v) { return typeof v === 'number' ? (isFinite(v) ? Number(v).toPrecision(6) : '') : v; }
+    var u = res.uniformity, cm = res.curvature, rows = [['section', 'key', 'value']];
+    [['source', ascii(name || '')], ['wafer_radius_mm', res.radius], ['edge_exclusion_mm', res.config.edgeExclusionMm],
+     ['n_points_total', res.nTotal], ['n_points_used', res.nUsed], ['n_edge_excluded', res.nEdge],
+     ['n_outside_wafer', res.nOutside], ['n_spikes_removed', res.nSpikes], ['fit_degree', res.config.degree],
+     ['fit_terms', res.nTerms], ['curvature_space_dim', res.dof], ['fit_rms_um', res.fit.rms],
+     ['residual_model', res.config.residualModel], ['reference_kappa_per_m', res.reference.kappa],
+     ['suggested_degree', res.sweep ? res.sweep.recommended : '']].forEach(function (p) { rows.push(['qc', p[0], num(p[1])]); });
+    [['curvature_mean_per_m', u.mean], ['curvature_std_per_m', u.std], ['curvature_std_over_mean', u.cv],
+     ['curvature_robust_ratio', u.robustCv], ['curvature_fit_se_rms_per_m', u.seRms], ['curvature_variation_snr', u.snr],
+     ['curvature_tensor_snr', u.tensorSnr], ['curvature_state', u.state], ['k1_mean_per_m', res.k1Mean],
+     ['k2_mean_per_m', res.k2Mean], ['zxx_mean_per_m', res.zxxMean], ['zyy_mean_per_m', res.zyyMean],
+     ['zxy_mean_per_m', res.zxyMean], ['max_slope', cm.maxSlope]].forEach(function (p) { rows.push(['diagnostic', p[0], num(p[1])]); });
+    return rows.map(function (r) { return r.join(','); }).join('\r\n') + '\r\n';
+  }
+
+  core.analyze = analyze;
+  core.analysis = { VERDICT: VERDICT, SHAPE: SHAPE, summaryCsv: summaryCsv, channelQuality: channelQuality,
+                    checkGeometry: checkGeometry, attachSweep: attachSweep, classifyShape: classifyShape };
+})(typeof window !== 'undefined' ? window : global);
+
+</script>
+<script>
+/* 讀取 height map:.ywa、x,y,值 表格、純數字矩陣。對應 warpage/mapio.py。
+ * 這裡只回傳解析結果和「檔案裡寫了什麼」,晶圓尺寸、點距這些檔案沒寫的東西由使用者決定,不從資料範圍猜。
+ * 回傳:{format, columns[], values{col: Float64Array}, x, y, radius, flat, pitch, exclusion, meta}
+ * 矩陣沒有座標:回傳 grid {w, h},x, y 留給 layoutMatrix 依點距算。
+ */
+(function (root) {
+  'use strict';
+  var core = root.WaferCore = root.WaferCore || {};
+
+  var MAX_POINTS = 4200000;
+  var MIN_MATRIX_COLUMNS = 8;   // 沒有標題列、欄數這麼多的純數字檔是矩陣:表格不會有 6 個以上沒命名的量測欄
+  var KNOWN_YWA_UNITS = { WS: 'µm' };   // 由原廠報表確認過單位的 .ywa 欄位
+  var X_NAME = /^(x|xpos|posx|x_pos|pos_x|x[_ (\[].*)$/i;
+  var Y_NAME = /^(y|ypos|posy|y_pos|pos_y|y[_ (\[].*)$/i;
+  var MASK_TOKEN = /^([+-]?nan|na|n\/a|#n\/a|null|none|--?|[+-]?inf(inity)?)$/i;   // 這些是「沒量到」,不是標題
+
+  function splitLines(text) { return text.replace(/^﻿/, '').split(/\r\n|\r|\n/); }
+
+  /* 接受小數逗號(分號分隔的檔案常見);不是完整的數字就當解析失敗,parseFloat 會把 "12abc" 讀成 12 */
+  function parseNumber(token) {
+    var t = String(token).trim().replace(',', '.');
+    if (!t || !/^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(t)) return null;
+    return parseFloat(t);
+  }
+  function toFloat(token) { var v = parseNumber(token); return v === null ? NaN : v; }
+  function firstFloat(meta, key) {
+    var v = meta[key];
+    if (!v || !v.length) return null;
+    var n = parseFloat(v[0]);
+    return isFinite(n) ? n : null;
+  }
+
+  function isYWafer(text) {
+    return /^\s*YSystems\b[^\n]*YWafer/i.test(text) || /^[ \t]*XADR[ \t]*,[ \t]*YADR[ \t]*,/im.test(text);
+  }
+
+  function rejectDuplicates(names) {
+    var seen = {}, dup = [];
+    names.forEach(function (n) { if (n) { if (seen[n]) dup.push(n); seen[n] = 1; } });
+    if (dup.length) throw new Error('欄位名稱重複(' + dup.join('、') + '),無法判斷要用哪一欄。');
+  }
+
+  /* x_mm = XADR × Pitch;空的中間欄要留住位置,否則後面的欄位會全部錯位 */
+  function readYwa(text) {
+    var lines = splitLines(text), header = -1, meta = {}, i, parts;
+    for (i = 0; i < lines.length; i++) {
+      if (/^\s*XADR\s*,\s*YADR\b/i.test(lines[i])) { header = i; break; }
+      parts = lines[i].split(',').map(function (s) { return s.trim(); });
+      if (parts.length >= 2 && parts[0]) meta[parts[0]] = parts.slice(1).filter(function (s) { return s; });
+    }
+    if (header < 0) throw new Error('不是 YWafer 檔:找不到 XADR,YADR 標題列。');
+    var cols = lines[header].split(',').map(function (s) { return s.trim(); }), positions = [];
+    for (i = 2; i < cols.length; i++) if (cols[i]) positions.push(i);
+    if (!positions.length) throw new Error('這個 YWafer 檔沒有量測欄位(標題列只有 XADR,YADR)。');
+    var names = positions.map(function (j) { return cols[j]; });
+    rejectDuplicates(names);
+
+    var xa = [], ya = [], rows = positions.map(function () { return []; });
+    for (i = header + 1; i < lines.length; i++) {
+      parts = lines[i].split(',');
+      var xadr = toFloat(parts[0]), yadr = parts.length > 1 ? toFloat(parts[1]) : NaN;
+      if (!isFinite(xadr) || !isFinite(yadr)) continue;   // 結尾的 ",,,," 空列
+      xa.push(xadr); ya.push(yadr);
+      for (var k = 0; k < positions.length; k++)
+        rows[k].push(positions[k] < parts.length ? toFloat(parts[positions[k]]) : NaN);
+    }
+    if (!xa.length) throw new Error('YWafer 檔沒有可用的量測點。');
+    var pitch = meta.Pitch && meta.Pitch.length >= 2 ? [parseFloat(meta.Pitch[0]), parseFloat(meta.Pitch[1])] : null;
+    var values = {}, units = {}, notes = [];
+    names.forEach(function (n, c) {
+      values[n] = Float64Array.from(rows[c]);
+      if (KNOWN_YWA_UNITS[n]) units[n] = KNOWN_YWA_UNITS[n];
+    });
+    if ((meta.Center || []).some(function (c) { return parseFloat(c) !== 0; }))
+      notes.push('檔案的 Center 是 (' + meta.Center.join(', ') + '),不是 0。手上的檔案都是 0,非零的語意沒有驗證過,這裡沒有套用。');
+    return {
+      format: 'ywa', columns: names, values: values, units: units, meta: meta, pitch: pitch, notes: notes,
+      xAddr: Float64Array.from(xa), yAddr: Float64Array.from(ya),
+      radius: firstFloat(meta, 'Radius'), flat: firstFloat(meta, 'Flat'), exclusion: firstFloat(meta, 'Exclusion')
+    };
+  }
+
+  /* 引號內的分隔符號不算 */
+  function splitQuoted(line, sep) {
+    var out = [], cur = '', quoted = false;
+    for (var i = 0; i < line.length; i++) {
+      var ch = line.charAt(i);
+      if (ch === '"') quoted = !quoted;
+      else if (ch === sep && !quoted) { out.push(cur.trim()); cur = ''; }
+      else cur += ch;
+    }
+    out.push(cur.trim());
+    return out;
+  }
+
+  /* 分號與 Tab 優先:這兩種檔案裡的逗號通常是小數點。分隔符號看第二行:第一行可能是標題文字。 */
+  function splitRows(lines) {
+    var sample = lines.length > 1 ? lines[1] : lines[0], sep = null;
+    [';', '\t', ','].some(function (s) { if (sample.indexOf(s) >= 0) { sep = s; return true; } return false; });
+    return lines.map(function (line) {
+      return sep === null ? line.split(/\s+/) : splitQuoted(line, sep);
+    });
+  }
+
+  function isHeaderRow(row) {
+    return row.some(function (cell) {
+      return cell && parseNumber(cell) === null && !MASK_TOKEN.test(cell);
+    });
+  }
+
+  /* #N/A 是 Excel 的缺值,不是註解 */
+  function dataLines(text) {
+    return splitLines(text).map(function (l) { return l.trim(); }).filter(function (l) {
+      return l && !/^(#(?!n\/?a)|%|;|\/\/)/i.test(l);
+    });
+  }
+
+  function widest(rows) {
+    var w = 0;
+    rows.forEach(function (r) { var n = r.filter(function (c) { return c; }).length; if (n > w) w = n; });
+    return w;
+  }
+
+  function looksLikeMatrix(text) {
+    var lines = dataLines(text);
+    if (lines.length < 2) return false;
+    var rows = splitRows(lines), first = rows[0], header = isHeaderRow(first), data = header ? rows.slice(1) : rows;
+    if (!data.length) return false;
+    var wide = widest(data);
+    return wide >= MIN_MATRIX_COLUMNS && (!header || wide > first.length);
+  }
+
+  function pickColumn(names, pattern, fallback) {
+    for (var i = 0; i < names.length; i++) if (pattern.test(names[i])) return i;
+    return fallback;
+  }
+
+  function readTable(text) {
+    var lines = dataLines(text);
+    if (!lines.length) throw new Error('沒有資料。');
+    var rows = splitRows(lines), first = rows[0], header = isHeaderRow(first), data = header ? rows.slice(1) : rows;
+    if (!data.length) throw new Error('只有標題列,沒有資料。');
+    if (widest(data) > first.length) throw new Error('資料最多有 ' + widest(data) + ' 欄,但第一列只有 ' + first.length + ' 欄,無法判斷每一欄是什麼。');
+    var names = header ? first : ['x', 'y', 'z'].concat(first.slice(3).map(function (_, i) { return 'col' + (i + 4); })).slice(0, first.length);
+    rejectDuplicates(names);
+    var ix = pickColumn(names, X_NAME, 0), iy = pickColumn(names, Y_NAME, 1);
+    if (ix === iy) throw new Error('認不出 x、y 座標欄(都對到 ' + names[ix] + ')。');
+    var keep = data.filter(function (r) { return isFinite(toFloat(r[ix] || '')) && isFinite(toFloat(r[iy] || '')); });
+    if (!keep.length) throw new Error('沒有任何一列的座標能解析成數字,請檢查分隔符號與欄位。');
+    if (keep.length > MAX_POINTS) throw new Error('資料太大(超過 420 萬點),請先裁切。');
+    var columns = [], values = {};
+    names.forEach(function (n, j) {
+      if (!n || j === ix || j === iy) return;
+      columns.push(n);
+      values[n] = Float64Array.from(keep.map(function (r) { return j < r.length ? toFloat(r[j]) : NaN; }));
+    });
+    if (!columns.length) throw new Error('除了座標之外沒有量測欄位。');
+    return {
+      format: 'table', columns: columns, values: values, units: {}, meta: {}, pitch: null, notes: [],
+      xRaw: Float64Array.from(keep.map(function (r) { return toFloat(r[ix]); })),
+      yRaw: Float64Array.from(keep.map(function (r) { return toFloat(r[iy]); })),
+      radius: null, flat: null, exclusion: null
+    };
+  }
+
+  function isCell(t) { return t === '' || MASK_TOKEN.test(t) || parseNumber(t) !== null; }
+
+  /* 空格分隔而且每格都讀得懂就用空格(含 "1,5 2,5" 的小數逗號);其餘認一種分隔符號,
+   * 空的格子才留得住。全部黏在一起切的話,遮罩的空格會消失,後面的數字整排往左移,而且不會報錯。 */
+  function splitMatrixLine(line) {
+    var spaced = line.split(/\s+/);
+    if (spaced.length >= 2 && spaced.every(isCell)) return spaced;
+    var sep = line.indexOf(';') >= 0 ? ';' : line.indexOf('\t') >= 0 ? '\t' : ',';
+    return line.split(sep).map(function (s) { return s.trim(); });
+  }
+
+  /* 每列都以分隔符號結尾時,最後那個空欄不是資料 */
+  function dropTrailingEmpty(table) {
+    if (!table.length || !table.every(function (t) { return t[t.length - 1] === ''; })) return table;
+    return table.map(function (t) { return t.slice(0, -1); });
+  }
+
+  /* 數字佔八成以上才算資料列,其餘視為標題或單位 */
+  function readMatrix(text) {
+    var lines = splitLines(text).map(function (l) { return l.trim(); }).filter(function (l) {
+      return l && !/^(#(?!n\/?a)|%)/i.test(l);   // 矩陣的第一格空著時,整列可能以 ; 開頭,不是註解
+    });
+    var tokens = dropTrailingEmpty(lines.map(splitMatrixLine).filter(function (t) {
+      return t.length >= 2 && t.filter(isCell).length >= 0.8 * t.length;
+    }));
+    var rows = tokens.map(function (t) { return t.map(toFloat); });
+    if (rows.length < 2) throw new Error('找不到至少 2 列的數值矩陣。');
+    var counts = {}, best = 0, bestCount = 0;
+    rows.forEach(function (r) { counts[r.length] = (counts[r.length] || 0) + 1; });
+    Object.keys(counts).forEach(function (k) {   // 同樣多列時取較長的
+      if (counts[k] > bestCount || (counts[k] === bestCount && +k > best)) { bestCount = counts[k]; best = +k; }
+    });
+    var kept = rows.filter(function (r) { return r.length === best; });
+    if (kept.length < 2 || best < 2) throw new Error('矩陣至少要 2×2。');
+    if (kept.length * best > MAX_POINTS) throw new Error('資料太大(超過 420 萬點),請先裁切。');
+    var arr = new Float64Array(best * kept.length);
+    kept.forEach(function (r, y) { for (var x = 0; x < best; x++) arr[y * best + x] = r[x]; });
+    return {
+      format: 'matrix', columns: ['z'], values: { z: arr }, units: {}, meta: {}, pitch: null, notes: [],
+      grid: { w: best, h: kept.length }, radius: null, flat: null, exclusion: null
+    };
+  }
+
+  /* 前兩欄是不重複的規則格點,才像座標。平滑的高度值不會剛好落在格點上。 */
+  function firstColumnsAreCoordinates(rows) {
+    var x = Float64Array.from(rows.map(function (r) { return toFloat(r[0]); }));
+    var y = Float64Array.from(rows.map(function (r) { return toFloat(r[1]); }));
+    if (!x.every(isFinite) || !y.every(isFinite)) return false;
+    var grid = core.protocol.detectGrid(x, y);
+    if (!grid) return false;
+    return new Set(Array.from(grid.cell)).size === rows.length;
+  }
+
+  /* 依內容選格式。沒有標題又欄數少的時候最容易判斷錯:兩欄是矩陣、三欄當 x, y, z,
+   * 四到七欄看前兩欄像不像座標。判斷錯的代價是把高度當座標,所以不能只看欄數。 */
+  function parseMapText(text) {
+    if (isYWafer(text)) return readYwa(text);
+    if (looksLikeMatrix(text)) return readMatrix(text);
+    var lines = dataLines(text);
+    if (!lines.length) throw new Error('沒有資料。');
+    var rows = splitRows(lines);
+    if (isHeaderRow(rows[0])) return readTable(text);
+    var n = rows[0].length;
+    if (n === 3) return readTable(text);
+    return n > 3 && firstColumnsAreCoordinates(rows) ? readTable(text) : readMatrix(text);
+  }
+
+  core.io = { parseMapText: parseMapText, isYWafer: isYWafer, readYwa: readYwa, readTable: readTable, readMatrix: readMatrix };
+})(typeof window !== 'undefined' ? window : global);
+
+</script>
+<script>
+/* QR 傳輸的 v3 封包:除了高度,還帶算曲率一定要有的晶圓幾何。
+ *
+ * payload = deflate( 'WD01' + headerLen(2B LE) + headerJSON(UTF-8) + 高位元組平面 + 低位元組平面 )
+ * header  = {v:3, kind:'height', name, unit, unitDeclared, w, h, min, max,
+ *            radius, flat, x0, y0, dx, dy, srcW, srcH, demo?, fromImage?}
+ * raw     = w×h 個 16-bit 值(列優先),0 = 這格沒有量測值,1..65535 = 量化後的實際值
+ * 座標    = x = x0 + 欄·dx、y = y0 − 列·dy(mm,原點是晶圓中心,列 0 在 +Y 側,與 3D 檢視器一致)
+ *
+ * v2 → v3 為什麼是 16-bit:v2 只有 255 階。一顆 600 µm 的突波就把階距撐到 2.4 µm,比雜訊還大,
+ * 看 3D 沒差,算二次微分就不行。高低位元組分開放:高位元組很平滑,deflate 幾乎不佔空間。
+ *
+ * 只有規則格點能傳。不規則的點若硬塞進格子,座標會被移動,斜率大的邊緣誤差可達數 µm。
+ * QR 幀格式(WD1|id|i|n|b64)不變,舊手機端收完會明確報「不支援的版本:3」。
+ */
+(function (root) {
+  'use strict';
+  var core = root.WaferCore = root.WaferCore || {};
+  var pako = root.pako;
+
+  var MAGIC = [87, 68, 48, 49];     // 'WD01'
+  var VERSION = 3;
+  var NODATA = 0;
+  var LEVELS = 65534;
+  var GRID_TOLERANCE = 0.02;        // 座標偏離格點超過點距的這個比例,就不當規則格點
+  var MAX_GRID_DIM = 1024;
+  var MAX_NORMAL_OFF_WAFER = 0.4;   // 方形網格的圓外佔 21%,格子粗時可到三成多;比這多就不像只是角落
+
+  function utf8Encode(s) { return new TextEncoder().encode(s); }
+
+  function sortedUnique(values) {
+    var seen = {}, out = [];
+    for (var i = 0; i < values.length; i++) {
+      var key = Math.round(values[i] * 1e6);
+      if (!seen[key]) { seen[key] = 1; out.push(values[i]); }
+    }
+    return out.sort(function (a, b) { return a - b; });
+  }
+
+  /* 軸上的點距:相鄰唯一值的最小正差。圓片上某些列缺點,中位數也一樣,但最小差才不會被缺口騙。 */
+  function axisPitch(values) {
+    var u = sortedUnique(values), best = Infinity;
+    for (var i = 1; i < u.length; i++) {
+      var d = u[i] - u[i - 1];
+      if (d > 1e-6 && d < best) best = d;
+    }
+    return { min: u[0], max: u[u.length - 1], step: best === Infinity ? null : best };
+  }
+
+  function onLattice(values, origin, step) {
+    for (var i = 0; i < values.length; i++) {
+      var t = (values[i] - origin) / step;
+      if (Math.abs(t - Math.round(t)) > GRID_TOLERANCE) return false;
+    }
+    return true;
+  }
+
+  /* 散點 → 規則格點。回傳 {w, h, x0, y0, dx, dy, cell[]},不是格點時回傳 null。 */
+  function detectGrid(x, y) {
+    if (x.length < 4) return null;
+    var ax = axisPitch(x), ay = axisPitch(y);
+    if (!ax.step || !ay.step) return null;
+    if (!onLattice(x, ax.min, ax.step) || !onLattice(y, ay.min, ay.step)) return null;
+    var w = Math.round((ax.max - ax.min) / ax.step) + 1, h = Math.round((ay.max - ay.min) / ay.step) + 1;
+    if (w < 2 || h < 2 || w > MAX_GRID_DIM || h > MAX_GRID_DIM) return null;
+    var cell = new Int32Array(x.length);
+    for (var i = 0; i < x.length; i++)
+      cell[i] = Math.round((ay.max - y[i]) / ay.step) * w + Math.round((x[i] - ax.min) / ax.step);
+    return { w: w, h: h, x0: ax.min, y0: ay.max, dx: ax.step, dy: ay.step, cell: cell };
+  }
+
+  /* 把點填進 w×h 的矩陣,沒量到的格子是 NaN。同一格出現兩次時後面的蓋前面的,回報次數。 */
+  function fillGrid(grid, values) {
+    var arr = new Float64Array(grid.w * grid.h).fill(NaN), duplicates = 0;
+    for (var i = 0; i < values.length; i++) {
+      if (arr[grid.cell[i]] === arr[grid.cell[i]]) duplicates++;
+      arr[grid.cell[i]] = values[i];
+    }
+    return { arr: arr, duplicates: duplicates };
+  }
+
+  /* 整數倍抽點:新格子中心一定落在舊格點上,座標才不會被捲動。
+   * 取以它為中心的奇數寬度視窗平均。中心沒量到就不算,否則圓片邊緣會往外長一圈。 */
+  function decimate(arr, grid, factor) {
+    if (factor <= 1) return { arr: arr, grid: grid };
+    var w = grid.w, h = grid.h, half = Math.floor(factor / 2);
+    var tw = Math.floor((w - 1) / factor) + 1, th = Math.floor((h - 1) / factor) + 1;
+    var out = new Float64Array(tw * th);
+    for (var ty = 0; ty < th; ty++) {
+      for (var tx = 0; tx < tw; tx++) {
+        var cy = ty * factor, cx = tx * factor, s = 0, n = 0;
+        if (arr[cy * w + cx] !== arr[cy * w + cx]) { out[ty * tw + tx] = NaN; continue; }
+        for (var yy = Math.max(0, cy - half); yy <= Math.min(h - 1, cy + half); yy++)
+          for (var xx = Math.max(0, cx - half); xx <= Math.min(w - 1, cx + half); xx++) {
+            var v = arr[yy * w + xx];
+            if (v === v) { s += v; n++; }
+          }
+        out[ty * tw + tx] = s / n;
+      }
+    }
+    return {
+      arr: out,
+      grid: { w: tw, h: th, x0: grid.x0, y0: grid.y0,
+              dx: grid.dx === null ? null : grid.dx * factor, dy: grid.dy === null ? null : grid.dy * factor }
+    };
+  }
+
+  function quantize(arr) {
+    var mn = Infinity, mx = -Infinity, i, v;
+    for (i = 0; i < arr.length; i++) {
+      v = arr[i];
+      if (v === v && isFinite(v)) { if (v < mn) mn = v; if (v > mx) mx = v; }
+    }
+    if (mn === Infinity) throw new Error('資料全為空值(NaN)');
+    if (mx - mn < 1e-12) mx = mn + 1;
+    var raw = new Uint16Array(arr.length);
+    for (i = 0; i < arr.length; i++) {
+      v = arr[i];
+      raw[i] = v === v && isFinite(v) ? 1 + Math.round((v - mn) / (mx - mn) * LEVELS) : NODATA;
+    }
+    return { raw: raw, min: mn, max: mx };
+  }
+
+  function encodeHeight(arr, info) {
+    var q = quantize(arr), n = arr.length;
+    var meta = {
+      v: VERSION, kind: 'height', name: String(info.name || '未命名').slice(0, 40),
+      unit: 'µm', unitDeclared: !!info.unitDeclared, w: info.w, h: info.h, min: q.min, max: q.max,
+      radius: info.radius || null, flat: info.flat === undefined ? null : info.flat,
+      x0: info.x0 === undefined ? null : info.x0, y0: info.y0 === undefined ? null : info.y0,
+      dx: info.dx || null, dy: info.dy || null, srcW: info.srcW || info.w, srcH: info.srcH || info.h
+    };
+    if (info.demo) meta.demo = true;
+    if (info.fromImage) meta.fromImage = true;
+    if (info.notes && info.notes.length) meta.notes = info.notes;
+    var hb = utf8Encode(JSON.stringify(meta));
+    var buf = new Uint8Array(6 + hb.length + 2 * n), off = 6 + hb.length;
+    buf.set(MAGIC, 0);
+    buf[4] = hb.length & 255; buf[5] = hb.length >> 8;
+    buf.set(hb, 6);
+    for (var i = 0; i < n; i++) {
+      buf[off + i] = q.raw[i] >> 8;
+      buf[off + n + i] = q.raw[i] & 255;
+    }
+    return { bytes: pako.deflate(buf, { level: 9 }), min: q.min, max: q.max };
+  }
+
+  function isNumber(v) { return typeof v === 'number' && isFinite(v); }
+  function isOptional(v, check) { return v === null || v === undefined || check(v); }
+  function isPositive(v) { return isNumber(v) && v > 0; }
+
+  /* 標頭來自相機掃到的任何 QR,不能當它是我們自己的電腦端送的。不對就整包不收,不要算出奇怪的東西。 */
+  function checkHeader(meta) {
+    var sized = [meta.w, meta.h].every(function (d) { return Number.isInteger(d) && d >= 2 && d <= MAX_GRID_DIM; });
+    if (!sized) throw new Error('矩陣尺寸異常');
+    var fine = isNumber(meta.min) && isNumber(meta.max) && typeof meta.name === 'string' &&
+      isOptional(meta.radius, isPositive) && isOptional(meta.dx, isPositive) && isOptional(meta.dy, isPositive) &&
+      isOptional(meta.x0, isNumber) && isOptional(meta.y0, isNumber) && isOptional(meta.flat, isNumber) &&
+      isOptional(meta.notes, function (n) { return Array.isArray(n) && n.every(function (s) { return typeof s === 'string'; }); });
+    if (!fine) throw new Error('標頭內容不合理');
+  }
+
+  /* body 是解壓縮後、標頭之後的資料,meta 是標頭 */
+  function decodeHeight(meta, body) {
+    if (meta.kind !== 'height') throw new Error('不支援的資料種類:' + meta.kind);
+    checkHeader(meta);
+    var w = meta.w, h = meta.h, n = w * h;
+    if (body.length !== 2 * n) throw new Error('資料長度與尺寸不符');
+    var arr = new Float64Array(n), span = meta.max - meta.min;
+    for (var i = 0; i < n; i++) {
+      var q = body[i] << 8 | body[n + i];
+      arr[i] = q === NODATA ? NaN : meta.min + (q - 1) / LEVELS * span;
+    }
+    return { meta: meta, arr: arr };
+  }
+
+  /* 把格點資料攤成分析要的點列表。只留有量測值的格子;cell 記住每一點在矩陣的位置,畫圖用。 */
+  function toWaferMap(decoded) {
+    var m = decoded.meta, arr = decoded.arr, cells = [], i;
+    if (!m.radius || !m.dx || !m.dy) return null;
+    for (i = 0; i < arr.length; i++) if (arr[i] === arr[i]) cells.push(i);
+    var x = new Float64Array(cells.length), y = new Float64Array(cells.length), z = new Float64Array(cells.length);
+    var pointAt = new Int32Array(arr.length).fill(-1);
+    for (i = 0; i < cells.length; i++) {
+      x[i] = m.x0 + (cells[i] % m.w) * m.dx;
+      y[i] = m.y0 - Math.floor(cells[i] / m.w) * m.dy;
+      z[i] = arr[cells[i]];
+      pointAt[cells[i]] = i;
+    }
+    return {
+      x: x, y: y, z: z, cell: Int32Array.from(cells), pointAt: pointAt,
+      w: m.w, h: m.h, x0: m.x0, y0: m.y0, dx: m.dx, dy: m.dy,
+      radius: m.radius, flat: m.flat, unitDeclared: !!m.unitDeclared, fromImage: !!m.fromImage, name: m.name,
+      notes: m.notes || []
+    };
+  }
+
+  /* 解析結果的座標 → 格點。座標扣掉晶圓中心之後一律是 mm;不知道點距時 dx, dy 是 null(只能看 3D)。 */
+  function resolveGrid(parsed, column, opts) {
+    var values = parsed.values[column], pitch = opts.pitch || parsed.pitch, center = opts.center || [0, 0], i;
+    if (parsed.format === 'matrix') {
+      var w = parsed.grid.w, h = parsed.grid.h, dx = pitch ? pitch[0] : null, dy = pitch ? pitch[1] : null;
+      // 矩陣本身沒有座標:列 0 在最上方(+Y)、欄 0 在最左邊,矩陣中心當原點
+      return {
+        arr: values, duplicates: 0,
+        grid: { w: w, h: h, dx: dx, dy: dy,
+                x0: pitch ? -(w - 1) / 2 * dx - center[0] : null, y0: pitch ? (h - 1) / 2 * dy - center[1] : null }
+      };
+    }
+    var sx = parsed.format === 'ywa' ? (pitch ? pitch[0] : 1) : (opts.xyScale || 1);
+    var sy = parsed.format === 'ywa' ? (pitch ? pitch[1] : 1) : (opts.xyScale || 1);
+    var rawX = parsed.format === 'ywa' ? parsed.xAddr : parsed.xRaw, rawY = parsed.format === 'ywa' ? parsed.yAddr : parsed.yRaw;
+    var x = new Float64Array(rawX.length), y = new Float64Array(rawX.length);
+    for (i = 0; i < x.length; i++) { x[i] = rawX[i] * sx - center[0]; y[i] = rawY[i] * sy - center[1]; }
+    var grid = detectGrid(x, y);
+    if (!grid) throw new Error('這個檔案的座標不是規則格點,目前無法用 QR 傳送。');
+    var filled = fillGrid(grid, values);
+    if (parsed.format === 'ywa' && !pitch) { grid.dx = null; grid.dy = null; grid.x0 = null; grid.y0 = null; }
+    return { arr: filled.arr, duplicates: filled.duplicates, grid: grid };
+  }
+
+  /* 格子裡有值的點。幾何檢查要看全部的點,所以在刪圓外之前用。 */
+  function measuredPoints(arr, grid) {
+    var x = [], y = [];
+    for (var i = 0; i < arr.length; i++) {
+      if (arr[i] !== arr[i]) continue;
+      x.push(grid.x0 + (i % grid.w) * grid.dx);
+      y.push(grid.y0 - Math.floor(i / grid.w) * grid.dy);
+    }
+    return { x: Float64Array.from(x), y: Float64Array.from(y) };
+  }
+
+  /* 方形網格的圓外常填 0 或 −9999。圓外本來就不看,留著會撐大量化範圍、把 3D 壓平。 */
+  function blankOffWafer(arr, grid, radius) {
+    var out = Float64Array.from(arr), blanked = 0;
+    for (var r = 0; r < grid.h; r++) {
+      var py = grid.y0 - r * grid.dy;
+      for (var c = 0; c < grid.w; c++) {
+        var px = grid.x0 + c * grid.dx;
+        if (px * px + py * py > (radius + 1e-9) * (radius + 1e-9) && out[r * grid.w + c] === out[r * grid.w + c]) {
+          out[r * grid.w + c] = NaN;
+          blanked++;
+        }
+      }
+    }
+    return { arr: out, blanked: blanked };
+  }
+
+  /* 先檢查再刪圓外。順序不能反:原點在角落的檔案,圓外刪掉之後剩下的四分之一片全在圓內,
+   * 手機端就再也看不出原點錯了,會照樣算出一組看似合理的曲率。檢查沒過就不刪,手機端會擋下同一個錯。 */
+  function applyWaferOutline(arr, grid, radius) {
+    var out = { arr: Float64Array.from(arr), blanked: 0, fraction: 0, geometryError: null, blankNote: null };
+    if (!radius || grid.dx === null || grid.x0 === null) return out;
+    var points = measuredPoints(arr, grid);
+    try { core.analysis.checkGeometry(points.x, points.y, radius); }
+    catch (e) { out.geometryError = e.message; return out; }
+    var blank = blankOffWafer(arr, grid, radius);
+    out.arr = blank.arr;
+    out.blanked = blank.blanked;
+    out.fraction = points.x.length ? blank.blanked / points.x.length : 0;
+    if (out.fraction > MAX_NORMAL_OFF_WAFER)
+      out.blankNote = Math.round(out.fraction * 100) + '% 的點落在晶圓外,晶圓尺寸或中心可能填錯。';
+    return out;
+  }
+
+  /* 使用者的設定 + 解析結果 → 要傳的高度(一律 µm、mm)。電腦端與手機端直接開檔共用。 */
+  function prepareHeight(parsed, opts) {
+    var column = opts.column || parsed.columns[0];
+    if (!parsed.values[column]) throw new Error('找不到欄位 ' + column);
+    var resolved = resolveGrid(parsed, column, opts), grid = resolved.grid, zScale = opts.zScale || 1;
+    var outline = applyWaferOutline(resolved.arr, grid, opts.radius), scaled = outline.arr;
+    if (zScale !== 1) for (var i = 0; i < scaled.length; i++) scaled[i] *= zScale;
+    var maxDim = Math.max(grid.w, grid.h), factor = opts.maxDim ? Math.max(1, Math.ceil(maxDim / opts.maxDim)) : 1;
+    var small = decimate(scaled, grid, factor);
+    var notes = (parsed.notes || []).concat(outline.blankNote ? [outline.blankNote] : []);
+    return {
+      arr: small.arr,
+      info: {
+        name: opts.name, unitDeclared: opts.unitDeclared, radius: opts.radius || null,
+        flat: opts.flat === undefined ? null : opts.flat, w: small.grid.w, h: small.grid.h,
+        x0: small.grid.x0, y0: small.grid.y0, dx: small.grid.dx, dy: small.grid.dy,
+        srcW: grid.w, srcH: grid.h, demo: !!opts.demo, fromImage: !!opts.fromImage, notes: notes
+      },
+      report: {
+        blanked: outline.blanked, blankedFraction: outline.fraction, blankNote: outline.blankNote,
+        geometryError: outline.geometryError, duplicates: resolved.duplicates, factor: factor, srcGrid: grid
+      }
+    };
+  }
+
+  /* 不經過量化的 decodeHeight:手機端直接開檔時用,精度比 QR 更高 */
+  function asDecoded(prepared) {
+    var mn = Infinity, mx = -Infinity, arr = prepared.arr;
+    for (var i = 0; i < arr.length; i++) if (arr[i] === arr[i]) { if (arr[i] < mn) mn = arr[i]; if (arr[i] > mx) mx = arr[i]; }
+    if (mn === Infinity) throw new Error('資料全為空值(NaN)');
+    var meta = {}, info = prepared.info;
+    Object.keys(info).forEach(function (k) { meta[k] = info[k]; });
+    meta.v = VERSION; meta.kind = 'height'; meta.unit = 'µm'; meta.min = mn; meta.max = mx;
+    return { meta: meta, arr: arr };
+  }
+
+  core.protocol = {
+    MAGIC: MAGIC, VERSION: VERSION, detectGrid: detectGrid, fillGrid: fillGrid, decimate: decimate,
+    quantize: quantize, encodeHeight: encodeHeight, decodeHeight: decodeHeight, toWaferMap: toWaferMap,
+    prepareHeight: prepareHeight, asDecoded: asDecoded
+  };
+})(typeof window !== 'undefined' ? window : global);
+
+</script>
+<script>
+/* 晶圓 map 畫圖:格點直接對應像素,不做平滑,看到的就是量到的點。
+ * 高度用 viridis,跟 3D 檢視同一套顏色;曲率、殘差用藍↔紅發散色階、灰色在中間。
+ */
+(function (root) {
+  'use strict';
+  var core = root.WaferCore = root.WaferCore || {};
+  var la = core.linalg;
+
+  var VIRIDIS = [[68,1,84],[71,44,122],[59,81,139],[44,113,142],[33,144,141],[39,173,129],[92,200,99],[170,220,50],[253,231,37]];
+  var DIVERGING = [[42,120,214],[86,140,190],[56,56,53],[190,104,96],[227,73,72]];
+  var RAMPS = { viridis: VIRIDIS, diverging: DIVERGING };
+
+  function rampColor(name, t) {
+    var stops = RAMPS[name];
+    t = Math.min(1, Math.max(0, t));
+    var f = t * (stops.length - 1), i = Math.min(stops.length - 2, Math.floor(f)), u = f - i;
+    var a = stops[i], b = stops[i + 1];
+    return [a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u, a[2] + (b[2] - a[2]) * u];
+  }
+  function rampCss(name) {
+    var stops = RAMPS[name];
+    return 'linear-gradient(to top,' + stops.map(function (c, i) {
+      return 'rgb(' + c[0] + ',' + c[1] + ',' + c[2] + ') ' + Math.round(i / (stops.length - 1) * 100) + '%';
+    }).join(',') + ')';
+  }
+
+  function maskedValues(values, mask) {
+    var out = [];
+    for (var i = 0; i < values.length; i++) if (mask[i] && isFinite(values[i])) out.push(values[i]);
+    return Float64Array.from(out);
+  }
+
+  /* 色階範圍。floor 擋住「幾乎沒變化的圖被自動拉到滿色階」:完美碗形不該被畫得花花綠綠。
+   * 取 99 百分位而不是最大值,一兩個邊緣的點不會把整張圖壓成單色。 */
+  function colorLimits(values, mask, spec) {
+    var v = maskedValues(values, mask);
+    if (!v.length) return { min: 0, max: 1, center: null };
+    if (spec.ramp === 'viridis') {
+      var lo = Infinity, hi = -Infinity;
+      for (var i = 0; i < v.length; i++) { if (v[i] < lo) lo = v[i]; if (v[i] > hi) hi = v[i]; }
+      if (hi - lo < 1e-12) hi = lo + 1;
+      return { min: lo, max: hi, center: null };
+    }
+    var center = spec.center === 'mean' ? la.mean(v) : 0, dev = new Float64Array(v.length);
+    for (var k = 0; k < v.length; k++) dev[k] = Math.abs(v[k] - center);
+    var half = Math.max(la.percentile(dev, 99), spec.floor || 0, 1e-12);
+    return { min: center - half, max: center + half, center: center };
+  }
+
+  /* 把一張 map 畫進 canvas。geo = {w, h, x0, y0, dx, dy, radius, flat, cell}。
+   * 邊距留給晶圓輪廓:晶圓比資料大一圈時,輪廓才看得出邊緣排除了多少。 */
+  function drawWaferMap(canvas, geo, values, mask, limits, ramp, marks) {
+    var css = canvas.clientWidth || 320, dpr = Math.min(root.devicePixelRatio || 1, 2), size = Math.round(css * dpr);
+    canvas.width = size; canvas.height = size;
+    var g = canvas.getContext('2d'), pad = 10 * dpr, scale = (size - 2 * pad) / (2 * geo.radius);
+    var toX = function (mm) { return size / 2 + mm * scale; }, toY = function (mm) { return size / 2 - mm * scale; };
+    g.clearRect(0, 0, size, size);
+    var tmp = document.createElement('canvas');
+    tmp.width = geo.w; tmp.height = geo.h;
+    var t = tmp.getContext('2d'), img = t.createImageData(geo.w, geo.h), span = limits.max - limits.min;
+    for (var i = 0; i < values.length; i++) {
+      if (!mask[i] || !isFinite(values[i])) continue;
+      var c = rampColor(ramp, (values[i] - limits.min) / span), at = geo.cell[i] * 4;
+      img.data[at] = c[0]; img.data[at + 1] = c[1]; img.data[at + 2] = c[2]; img.data[at + 3] = 255;
+    }
+    t.putImageData(img, 0, 0);
+    g.imageSmoothingEnabled = false;
+    // 格點的中心才是量測位置,所以像素往外多畫半格
+    g.drawImage(tmp, toX(geo.x0 - geo.dx / 2), toY(geo.y0 + geo.dy / 2), geo.w * geo.dx * scale, geo.h * geo.dy * scale);
+    drawOutline(g, size, geo, scale, dpr);
+    drawMarks(g, marks, toX, toY, dpr);
+    return { cssScale: scale / dpr, cssWidth: size / dpr };
+  }
+
+  function drawOutline(g, size, geo, scale, dpr) {
+    g.strokeStyle = 'rgba(232,237,244,.55)';
+    g.lineWidth = dpr;
+    g.beginPath();
+    g.arc(size / 2, size / 2, geo.radius * scale, 0, Math.PI * 2);
+    g.stroke();
+    if (geo.flat === null || geo.flat === undefined) return;
+    // flat 方位用一小段粗線標在輪廓上。角度從 +X 逆時針量,螢幕的 y 朝下所以取負。
+    var a = -geo.flat * Math.PI / 180, r = geo.radius * scale;
+    g.lineWidth = 3 * dpr;
+    g.strokeStyle = '#e8edf4';
+    g.beginPath();
+    g.arc(size / 2, size / 2, r, a - 0.12, a + 0.12);
+    g.stroke();
+  }
+
+  /* 被當成突波去掉的點打叉,讓人知道那裡不是沒量到 */
+  function drawMarks(g, marks, toX, toY, dpr) {
+    if (!marks || !marks.length) return;
+    g.strokeStyle = '#ffffff';
+    g.lineWidth = 1.2 * dpr;
+    var s = 3 * dpr;
+    marks.forEach(function (m) {
+      var px = toX(m[0]), py = toY(m[1]);
+      g.beginPath();
+      g.moveTo(px - s, py - s); g.lineTo(px + s, py + s);
+      g.moveTo(px - s, py + s); g.lineTo(px + s, py - s);
+      g.stroke();
+    });
+  }
+
+  /* 螢幕座標 → 最近的量測點。畫面點一下讀數值用。 */
+  function hitTest(geo, layout, cssX, cssY) {
+    var x = (cssX - layout.cssWidth / 2) / layout.cssScale, y = -(cssY - layout.cssWidth / 2) / layout.cssScale;
+    var col = Math.round((x - geo.x0) / geo.dx), row = Math.round((geo.y0 - y) / geo.dy);
+    if (col < 0 || row < 0 || col >= geo.w || row >= geo.h) return null;
+    return { cell: row * geo.w + col, x: geo.x0 + col * geo.dx, y: geo.y0 - row * geo.dy };
+  }
+
+  core.charts = {
+    colorLimits: colorLimits, drawWaferMap: drawWaferMap, rampCss: rampCss, rampColor: rampColor, hitTest: hitTest
+  };
+})(typeof window !== 'undefined' ? window : global);
+
+</script>
+<script>
+/* 手機端的結果頁:掃到一張 height map 之後,算曲率、顯示判讀與圖。
+ * 只管這一頁的畫面與狀態;掃描、3D、PDF 由 viewer.html 提供(host)。
+ */
+(function (root) {
+  'use strict';
+  var core = root.WaferCore;
+  var host = null;
+  var state = { map: null, sample: null, res: null, error: null, field: 'laplacian', demo: false, layout: null,
+                config: { degree: 4, residualModel: 'paraboloid', edgeExclusionMm: 3 }, geometryNote: '' };
+
+  function el(id) { return document.getElementById(id); }
+  function make(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;   // 檔名是使用者取的,一律當文字塞
+    return e;
+  }
+  function sig(v, digits) {
+    if (v === undefined || v === null || !isFinite(v)) return '–';
+    if (v === 0) return '0';
+    var a = Math.abs(v), d = digits || 3;
+    if (a >= 1e5 || a < 1e-3) return v.toExponential(d - 1).replace('e+', 'e');
+    return Number(v.toPrecision(d)).toString();
+  }
+
+  /* 每張圖的定義。floor 取自擬合雜訊:曲率圖的色階不小於雜訊,碗形才不會被畫成有圖樣 */
+  var FIELDS = [
+    { id: 'laplacian', label: 'Laplacian', unit: '1/m', ramp: 'diverging', center: 'mean', noiseFloor: true, get: function (r) { return r.curvature.laplacian; } },
+    { id: 'k1', label: 'κ1', unit: '1/m', ramp: 'diverging', center: 'mean', noiseFloor: true, get: function (r) { return r.curvature.k1; } },
+    { id: 'k2', label: 'κ2', unit: '1/m', ramp: 'diverging', center: 'mean', noiseFloor: true, get: function (r) { return r.curvature.k2; } },
+    { id: 'zxx', label: '∂²z/∂x²', unit: '1/m', ramp: 'diverging', center: 'mean', noiseFloor: true, get: function (r) { return r.curvature.zxx; } },
+    { id: 'zyy', label: '∂²z/∂y²', unit: '1/m', ramp: 'diverging', center: 'mean', noiseFloor: true, get: function (r) { return r.curvature.zyy; } },
+    { id: 'zxy', label: '∂²z/∂x∂y', unit: '1/m', ramp: 'diverging', center: 'mean', noiseFloor: true, get: function (r) { return r.curvature.zxy; } },
+    { id: 'residual', label: '殘差', unit: 'µm', ramp: 'diverging', center: 'zero', get: function (r) { return r.residual; } },
+    { id: 'leveled', label: '高度(扣傾斜)', unit: 'µm', ramp: 'viridis', get: function (r) { return r.leveled; } },
+    { id: 'noise', label: 'Laplacian 雜訊', unit: '1/m', ramp: 'viridis', get: function (r) { return r.curvature.laplacianSe; } }
+  ];
+  function fieldById(id) {
+    for (var i = 0; i < FIELDS.length; i++) if (FIELDS[i].id === id) return FIELDS[i];
+    return FIELDS[0];
+  }
+
+  /* 點數多的時候手機要算一下,先把「計算中」畫出來再開始。
+   * 階數掃描最花時間,所以先顯示曲率,掃描算完再補上。compute 可能連續被叫(快速切換階數),
+   * run 編號讓舊的那次不會蓋掉新的結果。 */
+  var currentRun = 0;
+  function compute() {
+    if (!state.map) return;
+    var run = ++currentRun, cached = state.config.sweep;
+    el('resBusy').classList.remove('hidden');
+    setTimeout(function () {
+      if (run !== currentRun) return;
+      state.error = null;
+      try {
+        var cfg = { degree: state.config.degree, residualModel: state.config.residualModel,
+                    edgeExclusionMm: state.config.edgeExclusionMm, sweep: cached || null };
+        cfg.sweepDegrees = cached ? undefined : [];
+        state.res = core.analyze(state.map, cfg);
+      } catch (e) {
+        state.res = null;
+        state.error = e && e.message ? e.message : String(e);
+      }
+      el('resBusy').classList.add('hidden');
+      render();
+      if (state.res && !state.res.sweep) setTimeout(function () { computeSweep(run); }, 30);
+    }, 30);
+  }
+  function computeSweep(run) {
+    if (run !== currentRun || !state.res) return;
+    core.analysis.attachSweep(state.res, state.map);
+    renderSweep();
+    renderNotes();
+  }
+
+  function renderHeader() {
+    var m = state.map, parts = [];
+    el('resName').textContent = state.sample ? state.sample.meta.name : '—';
+    if (m) {
+      parts.push(sig(2 * m.radius, 4) + ' mm');
+      parts.push(m.x.length + ' 點');
+      parts.push('點距 ' + (m.dx === m.dy ? sig(m.dx, 3) : sig(m.dx, 3) + '×' + sig(m.dy, 3)) + ' mm');
+      parts.push(m.flat === null || m.flat === undefined ? 'flat 方向未指定' : 'flat ' + sig(m.flat, 3) + '°');
+    }
+    el('resMeta').textContent = parts.join(' ・ ');
+    el('resDemo').classList.toggle('hidden', !state.demo);
+  }
+
+  function renderVerdict() {
+    var box = el('resVerdict');
+    box.innerHTML = '';
+    if (state.error) {
+      box.className = 'verdict bad';
+      box.appendChild(make('div', 'vTag', '無法分析'));
+      box.appendChild(make('h2', '', state.error));
+      box.appendChild(make('p', '', '圖和數字都不會顯示,因為算下去只會得到看似合理的錯誤結果。3D 還是可以看。'));
+      return;
+    }
+    var r = state.res, u = r.uniformity, a = core.analysis.VERDICT[u.state];
+    box.className = 'verdict state-' + u.state;
+    box.appendChild(make('div', 'vTag', core.analysis.SHAPE[r.shape] + ' ・ ' + r.config.degree + ' 階擬合'));
+    box.appendChild(make('h2', '', a.title));
+    box.appendChild(make('p', '', a.body));
+  }
+
+  function statTile(label, value, unit, hint) {
+    var t = make('div', 'stat');
+    t.appendChild(make('div', 'sLabel', label));
+    var v = make('div', 'sValue', value);
+    if (unit) v.appendChild(make('span', 'sUnit', ' ' + unit));
+    t.appendChild(v);
+    if (hint) t.appendChild(make('div', 'sHint', hint));
+    return t;
+  }
+  function renderStats() {
+    var box = el('resStats'), r = state.res;
+    box.innerHTML = '';
+    if (!r) return;
+    var u = r.uniformity, rms = 0, n = 0;
+    for (var i = 0; i < r.residual.length; i++) if (r.residual[i] === r.residual[i]) { rms += r.residual[i] * r.residual[i]; n++; }
+    var whole = state.sample && state.sample.meta.stats;
+    if (whole) {
+      box.appendChild(statTile('Warp', sig(whole.warp), 'µm', '對最小平方平面'));
+      box.appendChild(statTile('Bow', whole.bow === null ? '–' : sig(whole.bow), 'µm', '中心相對平面'));
+    }
+    box.appendChild(statTile('Laplacian 平均', sig(u.mean), '1/m', '碗形時 = 2κ'));
+    box.appendChild(statTile('std / |mean|', sig(u.cv), '', '張量變化比 ' + sig(u.robustCv)));
+    box.appendChild(statTile('變化 / 雜訊', sig(u.tensorSnr), '', '門檻 3'));
+    box.appendChild(statTile('主曲率平均', sig(r.k1Mean) + ' / ' + sig(r.k2Mean), '', 'κ1 / κ2,單位 1/m'));
+    box.appendChild(statTile('殘差 RMS', sig(Math.sqrt(rms / Math.max(n, 1))), 'µm', r.config.residualModel === 'quadric' ? '扣含馬鞍的面' : '扣等向碗形'));
+    box.appendChild(statTile('使用點數', r.nUsed + ' / ' + r.nTotal, '', '邊緣 ' + r.nEdge + '、突波 ' + r.nSpikes));
+  }
+
+  function renderChips() {
+    var box = el('resChips');
+    box.innerHTML = '';
+    FIELDS.forEach(function (f) {
+      var b = make('button', 'chip' + (f.id === state.field ? ' on' : ''), f.label);
+      b.type = 'button';
+      b.setAttribute('aria-pressed', f.id === state.field ? 'true' : 'false');
+      b.addEventListener('click', function () { state.field = f.id; renderChips(); renderMap(); });
+      box.appendChild(b);
+    });
+  }
+
+  function spikeMarks(r, map) {
+    var out = [];
+    for (var i = 0; i < r.spikes.length; i++) if (r.spikes[i]) out.push([map.x[i], map.y[i]]);
+    return out;
+  }
+
+  function renderMap() {
+    var r = state.res, map = state.map, cv = el('resCanvas');
+    if (!r) return;
+    var f = fieldById(state.field), values = f.get(r);
+    var spec = { ramp: f.ramp, center: f.center === 'mean' ? 'mean' : 'zero', floor: f.noiseFloor ? 3 * r.uniformity.seRms : 0 };
+    var limits = core.charts.colorLimits(values, r.mask, spec);
+    var layout = core.charts.drawWaferMap(cv, map, values, r.mask, limits, f.ramp,
+      f.id === 'leveled' ? spikeMarks(r, map) : []);
+    state.layout = layout;
+    el('resLegend').style.background = core.charts.rampCss(f.ramp);
+    el('resLegendMax').textContent = sig(limits.max);
+    el('resLegendMid').textContent = limits.center === null ? '' : sig(limits.center);
+    el('resLegendMin').textContent = sig(limits.min);
+    el('resLegendUnit').textContent = f.unit;
+    el('resReadout').textContent = '點一下圖可以讀數值';
+    el('resMapTitle').textContent = f.label;
+    el('resMapHint').textContent = mapHint(f, r);
+  }
+  function mapHint(f, r) {
+    if (f.noiseFloor) return '色階以平均值為中心,範圍不小於 3 倍擬合雜訊,所以均勻的片子看起來就是平的。平均 ' + sig(core.linalg.mean(pickMasked(f.get(r), r.mask))) + ' 1/m。';
+    if (f.id === 'residual') return '高度減掉最佳' + (r.config.residualModel === 'quadric' ? '含馬鞍的二次曲面' : '等向碗形') + '。這是高度不是應力,正負號通常跟曲率相反。';
+    if (f.id === 'leveled') return '已扣掉放置傾斜。打叉的點被判定為突波,沒有用來擬合。';
+    return '擬合式本身的不確定度。階數越高,邊緣越大;那裡的曲率不可靠。';
+  }
+  function pickMasked(values, mask) {
+    var out = [];
+    for (var i = 0; i < values.length; i++) if (mask[i]) out.push(values[i]);
+    return Float64Array.from(out);
+  }
+
+  function onMapTap(ev) {
+    var r = state.res, map = state.map, cv = el('resCanvas');
+    if (!r || !state.layout) return;
+    var box = cv.getBoundingClientRect();
+    var hit = core.charts.hitTest(map, state.layout, ev.clientX - box.left, ev.clientY - box.top);
+    if (!hit) return;
+    var point = map.pointAt[hit.cell];
+    if (point < 0 || !r.mask[point]) {
+      el('resReadout').textContent = '(' + sig(hit.x) + ', ' + sig(hit.y) + ') mm:這點沒有用來分析';
+      return;
+    }
+    var f = fieldById(state.field);
+    el('resReadout').textContent = '(' + sig(hit.x) + ', ' + sig(hit.y) + ') mm:' + f.label + ' = ' +
+      sig(f.get(r)[point], 4) + ' ' + f.unit;
+  }
+
+  /* 階數表同時是控制項:點一列就換那個階數。CV 誤差用短條看高低,數字放旁邊。 */
+  function renderSweep() {
+    var box = el('resSweep'), r = state.res;
+    box.innerHTML = '';
+    el('resSweepPanel').classList.toggle('hidden', !r || !!r.sweepSkipped);   // 掃不了的原因寫在提醒裡
+    if (!r || r.sweepSkipped) return;
+    if (!r.sweep) { box.appendChild(make('p', 'blockHint', '還在比較各階數…')); return; }
+    var s = r.sweep, top = Math.max.apply(null, s.rmseCv);
+    s.degrees.forEach(function (d, i) {
+      var row = make('button', 'sweepRow' + (d === r.config.degree ? ' on' : ''));
+      row.type = 'button';
+      row.setAttribute('aria-pressed', d === r.config.degree ? 'true' : 'false');
+      row.appendChild(make('span', 'swDeg', d + ' 階' + (d === s.recommended ? ' ・ 建議' : '')));
+      var track = make('span', 'swTrack'), bar = make('span', 'swBar');
+      bar.style.width = Math.max(2, s.rmseCv[i] / top * 100) + '%';
+      track.appendChild(bar);
+      row.appendChild(track);
+      row.appendChild(make('span', 'swNum', sig(s.rmseCv[i]) + ' µm'));
+      row.appendChild(make('span', 'swNum', sig(s.laplacianSeRms[i]) + ' 1/m'));
+      row.addEventListener('click', function () { setDegree(d); });
+      box.appendChild(row);
+    });
+  }
+
+  function renderNotes() {
+    var list = el('resNotes'), r = state.res;
+    list.innerHTML = '';
+    var notes = (r ? r.notes : []).slice();
+    if (state.geometryNote) notes.unshift(state.geometryNote);
+    if (state.map && (state.map.flat === null || state.map.flat === undefined))
+      notes.push('flat 方向未指定:曲率本身不受影響,但之後跟其他 map 對齊時需要它。');
+    el('resNotesPanel').classList.toggle('hidden', !notes.length);
+    notes.forEach(function (n) { list.appendChild(make('li', '', n)); });
+  }
+
+  function renderControls() {
+    var c = state.config;
+    el('resModelBowl').classList.toggle('on', c.residualModel === 'paraboloid');
+    el('resModelQuad').classList.toggle('on', c.residualModel === 'quadric');
+    el('resEdge').value = c.edgeExclusionMm;
+  }
+
+  function render() {
+    renderHeader();
+    renderVerdict();
+    var ok = !!state.res;
+    ['resStats', 'resMapPanel'].forEach(function (id) { el(id).classList.toggle('hidden', !ok); });
+    // 設定留著:邊緣排除填太大時算不出結果,要能在這裡改回來,不必重掃
+    renderControls();
+    renderNotes();
+    el('resCsv').disabled = !ok;
+    if (!ok) { el('resSweepPanel').classList.add('hidden'); return; }
+    renderStats();
+    renderChips();
+    renderMap();
+    renderSweep();
+  }
+
+  /* 只換階數或參考面時,用來擬合的點不變,階數掃描可以沿用 */
+  function setDegree(d) {
+    if (!state.res) return;
+    state.config = { degree: d, residualModel: state.config.residualModel, edgeExclusionMm: state.config.edgeExclusionMm, sweep: state.res.sweep };
+    compute();
+  }
+  function setModel(model) {
+    state.config = { degree: state.config.degree, residualModel: model, edgeExclusionMm: state.config.edgeExclusionMm, sweep: state.res ? state.res.sweep : null };
+    compute();
+  }
+  function setEdge(mm) {
+    if (!isFinite(mm) || mm < 0 || mm >= state.map.radius) {   // 不合理的值不算,欄位退回原值
+      el('resEdge').value = state.config.edgeExclusionMm;
+      return;
+    }
+    state.config = { degree: state.config.degree, residualModel: state.config.residualModel, edgeExclusionMm: mm };
+    compute();
+  }
+
+  /* 這張圖用 3D 看。遮罩外留成 NaN,3D 才會是真的圓。 */
+  function fieldToMatrix(values, mask) {
+    var m = state.map, arr = new Float64Array(m.w * m.h).fill(NaN);
+    for (var i = 0; i < values.length; i++) if (mask[i]) arr[m.cell[i]] = values[i];
+    return { arr: arr, w: m.w, h: m.h };
+  }
+  function openFieldIn3D() {
+    var r = state.res;
+    if (!r) return;
+    var f = fieldById(state.field);
+    host.showMatrixIn3D(fieldToMatrix(f.get(r), r.mask), state.sample.meta.name + ' ' + f.label, f.unit, state.map);
+  }
+
+  function exportCsv() {
+    if (!state.res) return;
+    var name = state.sample ? state.sample.meta.name : 'wafer';
+    host.download(new TextEncoder().encode(core.analysis.summaryCsv(state.res, name)), name.replace(/[\\/:*?"<>|]/g, '_') + '-summary.csv', 'text/csv');
+  }
+
+  function open() {
+    host.switchScreen('scrResult');
+    if (state.res) renderMap();   // canvas 在隱藏時量不到大小,回到這頁要重畫
+  }
+
+  /* decoded = {meta, arr},sample 是 3D 用的。回傳 false 代表缺幾何、只能看 3D。 */
+  function setHeight(decoded, sample) {
+    var map = core.protocol.toWaferMap(decoded);
+    state.sample = sample;
+    state.demo = !!decoded.meta.demo;
+    state.map = map;
+    state.res = null;
+    state.error = null;
+    state.field = 'laplacian';
+    state.config = { degree: 4, residualModel: 'paraboloid', edgeExclusionMm: 3 };
+    if (!map) return false;
+    host.switchScreen('scrResult');
+    renderHeader();
+    compute();
+    return true;
+  }
+
+  function init(hostApi) {
+    host = hostApi;
+    el('resBack').addEventListener('click', host.goHome);
+    el('res3D').addEventListener('click', function () { host.show3DSample(state.sample); });
+    el('resField3D').addEventListener('click', openFieldIn3D);
+    el('resCsv').addEventListener('click', exportCsv);
+    el('resCanvas').addEventListener('click', onMapTap);
+    el('resCanvas').addEventListener('mousemove', onMapTap);   // 桌機移過去就讀得到,不必點
+    el('resModelBowl').addEventListener('click', function () { setModel('paraboloid'); });
+    el('resModelQuad').addEventListener('click', function () { setModel('quadric'); });
+    el('resEdge').addEventListener('change', function () { setEdge(parseFloat(this.value)); });
+    window.addEventListener('resize', function () {
+      if (state.res && el('scrResult').classList.contains('active')) renderMap();
+    });
+  }
+
+  /* 換成一份沒有幾何的資料時,舊的分析不能再被叫出來,否則會看到別片的結果 */
+  function clear() {
+    currentRun++;
+    state.map = null;
+    state.sample = null;
+    state.res = null;
+    state.error = null;
+  }
+
+  root.WaferResult = {
+    init: init, setHeight: setHeight, open: open, clear: clear,
+    hasResult: function () { return !!state.map; },
+    getState: function () { return state; }
+  };
+})(typeof window !== 'undefined' ? window : this);
+
+</script>
+<script>
 'use strict';
 /* ============ 共用核心(與 sender.html 對應,協定 WD1) ============
  * raw 的語意依 header 的 v 而定:
  *   v1 = 0..255 全是實際值;NaN 也被寫成 0,因此圓外與最低值無從分辨(舊電腦端)
  *   v2 = 0 保留為「這格沒有量測值」,實際值量化在 1..255
- * 兩種都要收:電腦端是 USB 拷貝出去的,手機端網址會自動更新,新舊必然會混用。
+ *   v3 = 16-bit,另帶晶圓尺寸與點距,才算得出曲率(見 src/wf-protocol.js)
+ * 三種都要收:電腦端是 USB 拷貝出去的,手機端網址會自動更新,新舊必然會混用。
  */
 var PROTO = 'WD1';
 var MAGIC = [87, 68, 48, 49];
@@ -12326,31 +14425,6 @@ function fmtNum(v) {
   if (a !== 0 && (a < 0.001 || a >= 100000)) return v.toExponential(2);
   return String(Math.round(v * 1000) / 1000);
 }
-function demoWafer(n) {
-  var a = new Float32Array(n * n);
-  var pits = [[0.30, -0.20, 0.10, 3.2], [-0.35, 0.15, 0.07, 2.6], [0.05, 0.42, 0.12, 3.6]];
-  var pitch = Math.max(6, Math.floor(n / 8)), tw = Math.max(2, Math.floor(n / 48));
-  for (var y = 0; y < n; y++) {
-    for (var x = 0; x < n; x++) {
-      var cx = (x / (n - 1)) * 2 - 1, cy = (y / (n - 1)) * 2 - 1;
-      var r = Math.sqrt(cx * cx + cy * cy);
-      var v;
-      if (r > 1) { v = NaN; }
-      else {
-        v = 0.4 * r * r + 0.05 * Math.sin(x * 0.55) * Math.cos(y * 0.55);
-        if ((x % pitch) < tw || (y % pitch) < tw) v += 1.8;
-        for (var p = 0; p < pits.length; p++) {
-          var dx = cx - pits[p][0], dy = cy - pits[p][1];
-          var d = Math.sqrt(dx * dx + dy * dy);
-          if (d < pits[p][2]) v += pits[p][3] * (1 - d / pits[p][2]);
-        }
-      }
-      a[y * n + x] = v;
-    }
-  }
-  return { arr: a, w: n, h: n };
-}
-
 /* ============ 文字矩陣解析(與 sender.html 相同邏輯,供直接開檔) ============ */
 function parseMatrixText(text) {
   var lines = text.split(/\r\n|\r|\n/);
@@ -12464,6 +14538,8 @@ function downsample(src, sw, sh, tw, th) {
 var FILE_MAX_DIM = 256; // 直接開檔時的網格上限(手機 3D 效能考量)
 function matrixToSample(res, name, unit, col, source) {
   var w = res.w, h = res.h, arr = res.arr;
+  // 點距不等向時 3D 的長寬比要跟著變。沒有點距(舊資料)就當正方形。
+  var cellAspect = res.dx && res.dy ? res.dx / res.dy : 1;
   // 統計(含 Bow / Warp)在降採樣「之前」算,報表數字才是原始量測而不是平滑過的版本
   var stats = window.WaferReport ? window.WaferReport.waferStats(arr, w, h) : null;
   var srcW = w, srcH = h;
@@ -12495,6 +14571,7 @@ function matrixToSample(res, name, unit, col, source) {
       w: w, h: h, min: mn, max: mx, unit: unit || '',
       name: name || '檔案資料',
       col: col || '', // 量測欄位名(.ywa 用):判斷多樣本能否共用色階
+      cellAspect: cellAspect,
       // 以下只給 PDF 報表用,不影響 3D 顯示
       stats: stats, srcSize: [srcW, srcH], ywa: res.ywaMeta || null, source: source || ''
     },
@@ -12519,10 +14596,11 @@ function parsePayload(deflated) {
   var meta;
   try { meta = JSON.parse(utf8Decode(buf.subarray(6, 6 + hl))); }
   catch (e) { throw new Error('標頭解析失敗'); }
-  if (meta.v !== 1 && meta.v !== 2) throw new Error('不支援的版本:' + meta.v);
+  if (meta.v !== 1 && meta.v !== 2 && meta.v !== 3) throw new Error('不支援的版本:' + meta.v);
   var w = meta.w | 0, h = meta.h | 0;
   if (w < 2 || h < 2 || w > 1024 || h > 1024) throw new Error('矩陣尺寸異常');
   var raw = buf.subarray(6 + hl);
+  if (meta.v === 3) return { meta: meta, decoded: WaferCore.protocol.decodeHeight(meta, raw) };
   if (raw.length !== w * h) throw new Error('資料長度與尺寸不符');
   var values = new Float32Array(w * h), i;
   if (meta.v === 1) {
@@ -12577,10 +14655,65 @@ function finishTransfer() {
   decoded = data;
   if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
   stopScan();
-  // 「加掃一片」是接在既有樣本後面,不是取代 —— 掃第二片時第一片還在畫面上
-  if (appendOnScan && samples.length && samples.length < MAX_SAMPLES) addSample(data);
-  else show3D(data);
+  var append = appendOnScan && samples.length && samples.length < MAX_SAMPLES;
   appendOnScan = false;
+  // 「加掃一片」是接在既有樣本後面,不是取代 —— 掃第二片時第一片還在畫面上
+  try {
+    if (data.decoded) {
+      if (append) addSample(sampleFromDecoded(data.decoded, 'QR'));
+      else receiveHeight(data.decoded, 'QR');
+      return;
+    }
+    if (append) { addSample(data); return; }
+    show3DOnly([data], data.meta.name);
+    showStatus('這是舊版電腦端傳的資料,沒有晶圓尺寸和點距,只能看 3D。請把 USB 上的 wafer-sender.html 換成新版。', 9000);
+  } catch (e) {   // 相機已經關了,留在掃描畫面會卡住
+    switchScreen('scrHome');
+    document.getElementById('homeErr').textContent = '收到的資料無法顯示:' + e.message;
+  }
+}
+
+/* ============ 收到一張 height map ============ */
+function sampleFromDecoded(dec, source, ywaMeta) {
+  var m = dec.meta;
+  return matrixToSample({ arr: dec.arr, w: m.w, h: m.h, dx: m.dx, dy: m.dy, ywaMeta: ywaMeta || null },
+    m.name, m.unit, '', source);
+}
+function setHomeStatus(text, canAnalyze) {
+  document.getElementById('heightStatus').textContent = text;
+  document.getElementById('btnHeight').classList.add('done');
+  var btn = document.getElementById('btnResult');
+  btn.textContent = canAnalyze ? '看結果' : '看 3D';
+  btn.classList.remove('hidden');
+}
+/* 只能看 3D 的資料。舊的分析要清掉,不然「返回」會跑出別片的結果。 */
+function show3DOnly(list, label) {
+  WaferResult.clear();
+  setHomeStatus('已收到 ' + label + ' ・ 只有 3D', false);
+  showSamples(list);
+}
+/* 有晶圓尺寸和點距就算曲率;缺的話照樣看得到 3D,並說明缺什麼 */
+function receiveHeight(dec, source, ywaMeta) {
+  var sample = sampleFromDecoded(dec, source, ywaMeta), m = dec.meta;
+  if (WaferResult.setHeight(dec, sample)) {
+    setHomeStatus('已收到 ' + m.name + ' ・ ' + fmtNum(2 * m.radius) + ' mm', true);
+    return;
+  }
+  show3DOnly([sample], m.name);
+  var missing = [];
+  if (!m.radius) missing.push('晶圓尺寸');
+  if (!m.dx) missing.push('點距');
+  showStatus('缺' + missing.join('、') + ',算不出曲率,目前只能看 3D。請在電腦端填好後重傳。', 9000);
+}
+
+function goHome() {
+  stopScan();
+  switchScreen('scrHome');
+}
+/* 從 3D 回去:有分析結果回結果頁,沒有回首頁 */
+function leave3D() {
+  if (WaferResult.hasResult()) WaferResult.open();
+  else goHome();
 }
 
 /* ============ 掃描進度 UI ============ */
@@ -12603,6 +14736,7 @@ function updateProgress(idx) {
 var stream = null, scanning = false, starting = false, lastDecode = 0, bdBusy = false;
 var barcodeDetector = null, wakeLock = null;
 var appendOnScan = false;   // true = 掃完接在既有樣本後面(加掃),false = 取代整組
+var scanOrigin = 'scrHome'; // 取消掃描時回到哪一頁
 
 function switchScreen(id) {
   var scr = document.querySelectorAll('.screen');
@@ -12626,10 +14760,16 @@ function startScan(append) {
   if (starting || scanning) return; // 防止重複點擊造成多重相機工作階段
   starting = true;
   appendOnScan = !!append && samples.length > 0 && samples.length < MAX_SAMPLES;
+  var active = document.querySelector('.screen.active');
+  scanOrigin = active ? active.id : 'scrHome';
   var err = document.getElementById('homeErr');
   err.textContent = '';
+  document.getElementById('btnFile').classList.add('hidden');
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     err.textContent = '此瀏覽器無法使用相機。請改用 HTTPS 網址開啟本頁,或用 Chrome / Safari。';
+    // 首頁平常只有兩個掃描動作;相機不能用時才露出檔案入口,否則就走投無路了
+    document.getElementById('btnFile').classList.remove('hidden');
+    switchScreen('scrHome');
     starting = false;
     return;
   }
@@ -12664,12 +14804,13 @@ function startScan(append) {
     if (location.protocol === 'file:')
       m = 'file:// 開啟的頁面無法使用相機。瀏覽器把權限綁在網址來源上,而本機檔案沒有來源,' +
           '因此到設定裡也找不到可以開啟的開關。請改用 https:// 網址開啟本頁。\n' +
-          '若只是想看 3D,可直接用「開啟資料檔」—— 那個不需要相機。';
+          '也可以用下面的「從檔案讀取」—— 那個不需要相機。';
     else if (location.protocol === 'http:' &&
              location.hostname !== 'localhost' && location.hostname !== '127.0.0.1')
       m += '(注意:http:// 網址無法用相機,需 https:// 或 localhost。' +
            '連到別台電腦的區網 IP 不算 localhost。)';
     err.textContent = m;
+    document.getElementById('btnFile').classList.remove('hidden');
     stopScan();
     switchScreen('scrHome');
   });
@@ -12890,10 +15031,14 @@ function frameCamera() {
   three.controls.update();
 }
 
+/* 網格在場景裡的長寬:最長邊固定 100 單位。.ywa 的 Pitch,4,2 這種不等向點距要算進去,否則圓片會變橢圓。 */
+function meshSize(meta) {
+  var a = meta.cellAspect || 1, wide = meta.w * a, maxDim = Math.max(wide, meta.h);
+  return [100 * wide / maxDim, 100 * meta.h / maxDim];
+}
 function buildMesh(data, invert, scale) {
-  var w = data.meta.w, h = data.meta.h;
-  var maxDim = Math.max(w, h);
-  var pw = 100 * w / maxDim, ph = 100 * h / maxDim;
+  var w = data.meta.w, h = data.meta.h, size = meshSize(data.meta);
+  var pw = size[0], ph = size[1];
   var geo = new THREE.PlaneGeometry(pw, ph, w - 1, h - 1);
   geo.rotateX(-Math.PI / 2);
   var pos = geo.attributes.position;
@@ -12977,8 +15122,8 @@ function profileOf(s, angleDeg, N) {
 /* 格點座標 → 網格在 mesh 內的座標(與 buildMesh 的 PlaneGeometry 約定一致:
  * 最長邊 100 單位、列 0 在 −z 側) */
 function gridToScene(s, fx, fy) {
-  var w = s.meta.w, h = s.meta.h, maxDim = Math.max(w, h);
-  var pw = 100 * w / maxDim, ph = 100 * h / maxDim;
+  var w = s.meta.w, h = s.meta.h, size = meshSize(s.meta);
+  var pw = size[0], ph = size[1];
   return [-pw / 2 + fx * (pw / (w - 1)), -ph / 2 + fy * (ph / (h - 1))];
 }
 /* 曲面上的那條紅線。掛成 mesh 的子物件,高度倍率滑桿就自動跟著作用,
@@ -13319,37 +15464,75 @@ function updateMetaUI() {
 }
 
 /* ============ 事件 ============ */
-document.getElementById('btnStart').addEventListener('click', function () { startScan(false); });
+document.getElementById('btnHeight').addEventListener('click', function () { startScan(false); });
+document.getElementById('btnResult').addEventListener('click', function () {
+  if (WaferResult.hasResult()) WaferResult.open();
+  else if (samples.length) showCurrent(false);
+});
+document.getElementById('btnViewBack').addEventListener('click', leave3D);
 document.getElementById('btnCancel').addEventListener('click', function () {
   stopScan();
   appendOnScan = false;
   // 加掃到一半取消時要回到原本的畫面,不是回首頁把前幾片丟掉
-  if (samples.length) showCurrent(false);
-  else switchScreen('scrHome');
+  if (scanOrigin === 'scrView' && samples.length) showCurrent(false);
+  else switchScreen(scanOrigin === 'scrView' ? 'scrHome' : scanOrigin);
 });
 document.getElementById('btnRescan').addEventListener('click', function () { startScan(false); });
 document.getElementById('btnAdd').addEventListener('click', function () { startScan(true); });
-document.getElementById('btnDemo').addEventListener('click', function () {
-  showFromMatrix(demoWafer(96), 'demo-wafer', 'µm', '示範資料(非實際量測)');
-});
-document.getElementById('btnFile').addEventListener('click', function () {
-  document.getElementById('fileTxt').click();
-});
+function chooseFile() { document.getElementById('fileTxt').click(); }
+document.getElementById('btnFile').addEventListener('click', chooseFile);
+document.getElementById('btnScanFile').addEventListener('click', chooseFile);
+
+/* 直接開單一 .ywa:檔案裡有晶圓尺寸和點距,可以直接分析,而且不經過量化。
+ * 其他格式沒有晶圓尺寸,不猜,只給 3D。要算曲率請從電腦端填好再傳。 */
+function openYwaFile(name, txt) {
+  var parsed = WaferCore.io.parseMapText(txt);
+  var column = parsed.values.WS ? 'WS' : parsed.columns[0];
+  var prepared = WaferCore.protocol.prepareHeight(parsed, {
+    column: column, radius: parsed.radius, flat: parsed.flat,
+    unitDeclared: !!parsed.units[column], name: name.replace(/\.[^.]+$/, '').slice(0, 40)
+  });
+  receiveHeight(WaferCore.protocol.asDecoded(prepared), name, parsed.meta);
+}
+function openSingleFile(file, onError) {
+  var rd = new FileReader();
+  rd.onload = function () {
+    try {
+      stopScan();
+      if (isYWafer(rd.result)) { openYwaFile(file.name, rd.result); return; }
+      var base = file.name.replace(/\.[^.]+$/, '').slice(0, 40);
+      show3DOnly([matrixToSample(parseMatrixText(rd.result), base, '', '', file.name)], base);
+      showStatus('這種檔案沒有晶圓尺寸和點距,只能看 3D。要算曲率請從電腦端填好後傳過來。', 9000);
+    } catch (e) { onError(file.name + ':' + e.message); }
+  };
+  rd.onerror = function () { onError(file.name + ':讀取失敗'); };
+  rd.readAsText(file);
+}
 document.getElementById('fileTxt').addEventListener('change', function () {
   var files = Array.prototype.slice.call(this.files);
   this.value = '';
   if (!files.length) return;
   var err = document.getElementById('homeErr');
   err.textContent = '';
+  if (files.length === 1) {
+    openSingleFile(files[0], function (m) {
+      stopScan();
+      switchScreen('scrHome');
+      err.textContent = '無法讀取 ' + m;
+      document.getElementById('btnFile').classList.remove('hidden');
+    });
+    return;
+  }
+  stopScan();
   var out = [], errs = [], done = 0;
 
   function finish() {
     if (++done < files.length) return;
     var list = [];
     for (var i = 0; i < out.length; i++) if (out[i]) list.push(out[i]);
-    if (!list.length) { err.textContent = '無法讀取:' + errs.join(' / '); return; }
-    if (errs.length) err.textContent = '已略過 ' + errs.length + ' 個檔案:' + errs.join(' / ');
-    showSamples(list);
+    if (!list.length) { switchScreen('scrHome'); err.textContent = '無法讀取:' + errs.join(' / '); return; }
+    show3DOnly(list, list.length + ' 個檔案');
+    if (errs.length) showStatus('已略過 ' + errs.length + ' 個檔案:' + errs.join(' / '), 9000);
   }
   files.forEach(function (f, idx) {
     var rd = new FileReader();
@@ -13521,8 +15704,21 @@ document.getElementById('btnPdf').addEventListener('click', function () {
   });
 });
 
+WaferResult.init({
+  switchScreen: switchScreen,
+  goHome: goHome,
+  download: downloadBytes,
+  show3DSample: function (sample) { show3D(sample); },
+  showMatrixIn3D: function (matrix, name, unit, map) {
+    matrix.dx = map.dx; matrix.dy = map.dy;
+    show3D(matrixToSample(matrix, name, unit, '', '分析結果'));
+  }
+});
+
 /* 測試掛鉤(開發驗證用) */
 window.__wv = {
+  receiveHeight: receiveHeight,
+  resetStore: resetStore,
   onText: onText,
   processImageData: processImageData,
   getStore: function () { return store; },
