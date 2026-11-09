@@ -164,8 +164,13 @@
   .seg{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden;}
   .seg button{border:0;border-radius:0;font-size:13px;padding:8px 12px;background:transparent;}
   .seg button.on{background:var(--ink);color:#10141b;font-weight:600;}
-  #resEdge{width:72px;font:inherit;font-size:14px;padding:7px 8px;border-radius:8px;border:1px solid var(--line);
+  #resEdge,.setInput,.setSelect{width:72px;font:inherit;font-size:14px;padding:7px 8px;border-radius:8px;border:1px solid var(--line);
            background:#1c2430;color:var(--ink);}
+  .setInput{width:88px;}
+  .setSelect{width:auto;}
+  .seg button:disabled{color:#5d6876;cursor:not-allowed;}
+  #resStressOut{margin-top:14px;}
+  #resStressOut .stats{margin-bottom:8px;}
   #resNotes{padding-left:18px;font-size:13px;line-height:1.75;color:#c7d0dc;margin-top:8px;}
   details.guide summary{cursor:pointer;font-size:15px;font-weight:600;}
   details.guide ul{padding-left:18px;font-size:13px;line-height:1.75;color:#c7d0dc;margin-top:8px;}
@@ -190,7 +195,8 @@
     #resStats{grid-column:1;grid-row:2;}
     #resMapPanel{grid-column:2;grid-row:1 / span 3;}
     #resSweepPanel{grid-column:1;grid-row:3;}
-    #resPlPanel{grid-column:1 / -1;grid-row:4;}
+    #resStressPanel{grid-column:1 / -1;grid-row:4;}
+    #resPlPanel{grid-column:1 / -1;grid-row:5;}
     .verdict h2{font-size:30px;}
   }
 </style>
@@ -275,6 +281,49 @@
         </div>
         <div id="resReadout" aria-live="polite"></div>
         <p id="resMapHint" class="blockHint"></p>
+      </section>
+      <section id="resStressPanel" class="block">
+        <div class="blockHead">
+          <h3>應力換算(MPa / GPa)</h3>
+          <span id="resStressFilm" class="plName"></span>
+        </div>
+        <div class="setRow">
+          <label for="resHs">基板厚度</label>
+          <span><input id="resHs" class="setInput" type="number" min="0" step="any" inputmode="decimal" placeholder="必填"> µm</span>
+          <div class="seg" role="group" aria-label="常用的基板厚度(µm)">
+            <button type="button" data-hs="700">700</button>
+            <button type="button" data-hs="240">240</button>
+            <button type="button" data-hs="200">200</button>
+          </div>
+        </div>
+        <div class="setRow">
+          <label for="resMaterial">基板材料</label>
+          <select id="resMaterial" class="setSelect">
+            <option value="si111">Si(111)</option>
+            <option value="si100">Si(100)</option>
+            <option value="custom">自訂</option>
+          </select>
+          <span id="resCustomSub" class="hidden">
+            <label for="resCustomE">E</label> <input id="resCustomE" class="setInput" type="number" min="0" step="any" inputmode="decimal"> GPa
+            <label for="resCustomNu">ν</label> <input id="resCustomNu" class="setInput" type="number" min="-1" max="0.5" step="any" inputmode="decimal">
+          </span>
+        </div>
+        <div class="setRow">
+          <span>膜厚</span>
+          <div class="seg">
+            <button id="resFilmMap" type="button">TR 的 Th</button>
+            <button id="resFilmManual" type="button">自填</button>
+          </div>
+          <span id="resHfWrap"><input id="resHf" class="setInput" type="number" min="0" step="any" inputmode="decimal" placeholder="必填" aria-label="膜厚"> µm</span>
+        </div>
+        <div class="setRow">
+          <span>單位</span>
+          <div class="seg">
+            <button id="resUnitMpa" type="button">MPa</button>
+            <button id="resUnitGpa" type="button">GPa</button>
+          </div>
+        </div>
+        <div id="resStressOut"></div>
       </section>
       <section id="resStats" class="stats"></section>
       <section id="resPlPanel" class="block hidden">
@@ -14835,6 +14884,16 @@ global.WaferReport = {
              edgeExclusionMm: SOURCE_EDGE_EXCLUSION_MM };
   }
 
+  /* 只有正值才有意義的欄位(膜厚)內插到 height 的格點:失敗碼(≤ 0)先去掉,再去突波、內插。
+   * 對應 thickness.thickness_on_grid 的前半。opts = {sigma, scale(換成 µm 的倍數)} */
+  function channelOnGrid(map, spec, k, opts) {
+    var rotation = rotationDeg(map, spec), coords = gridCoords(spec), cells = offWaferCells(spec, coords, rotation, map.radius);
+    var src = spec.channels[k], arr = new Float64Array(src.arr.length), scale = opts.scale === undefined ? 1 : opts.scale;
+    for (var i = 0; i < arr.length; i++) arr[i] = src.arr[i] > 0 ? src.arr[i] * scale : NaN;
+    var cleaned = cleanChannel({ name: src.name, arr: arr }, coords, cells.off, opts.sigma);
+    return { name: src.name, unit: src.unit, values: interpolate(spec, cleaned.arr, rotation, map.x, map.y), spikes: cleaned.spikes, notes: cleaned.notes };
+  }
+
   /* 徑向分布圖上跟欄位一起畫的 Laplacian 環平均 */
   function laplacianRings(map, res, keepR, bin) {
     var r = [], v = [];
@@ -14874,7 +14933,252 @@ global.WaferReport = {
   core.spectral = {
     TARGETS: TARGETS, toSpectralMap: toSpectralMap, analyze: analyzeSpectral, findCliff: findCliff,
     pileupNote: pileupNote, interpolate: interpolate, rotationDeg: rotationDeg, summaryCsv: summaryCsv,
-    summarizeColumn: summarizeColumn
+    summarizeColumn: summarizeColumn, channelOnGrid: channelOnGrid
+  };
+})(typeof window !== 'undefined' ? window : global);
+
+</script>
+<script>
+/* 薄膜應力:逐點 Stoney 與 HR relations(軸對稱版)。對應 warpage/stress.py 與 warpage/thickness.py 的平滑。
+ * 公式、常數的來源見 warpage/stress.py;tests/test_web_parity.py 逐點比對兩邊的數字。
+ *
+ *   (σrr+σθθ)/2 = E_s·h_s²·K / [12·(1−ν_s)·h_f]             逐點 Stoney,K 是 Laplacian
+ *   HR:同上,但 K 換成 K + (1−ν_s)/(1+ν_s)·(K − K̄)         K̄ 是 K 在整片晶圓上的面積平均
+ *
+ * κ > 0 是碗形;薄膜在上、從薄膜面量時對應張應力,所以張應力為正。單張鍍膜後的 map 還含基板原形與重力。
+ */
+(function (root) {
+  'use strict';
+  var core = root.WaferCore = root.WaferCore || {};
+  var sf = core.surface;
+
+  /* Si 的剛度張量(GPa),Hopcroft, Nix & Kenny, J. MEMS 19, 229 (2010) 引用的值 */
+  var SI_C11 = 165.7, SI_C12 = 63.9, SI_C44 = 79.6;
+  var UM = 1e-6;
+  var EDGE_BAND_MM = 10;         // 中心、邊緣各取多寬,跟 warpage/stress.py 一樣
+  var QUAD_RADIAL = 24, QUAD_ANGULAR = 96;
+  var K_BAR_TOLERANCE = 0.01;    // 整片與分析範圍內的 K̄ 差超過這個比例就提醒
+  var SAG_RATIO_WARNING = 0.3;   // 弓高 / h_s 超過這個值,小變形假設開始不準(判斷值,跟 Python 版同一個)
+  var THIN_FILM_RATIO = 0.1;     // h_f / h_s 超過這個值,Stoney 的薄膜假設不成立(判斷值)
+  var THICKNESS_DEGREE = 4;      // 膜厚平滑的階數:量化成平台的 Th 逐點代入會把 ±20 nm 帶進應力
+  var MIN_THICKNESS_COVERAGE = 0.5;
+  var MPA_PER_GPA = 1e3;
+
+  /* 立方晶面內的 (E, ν),由剛度張量算。(111) 面內等向;(100) 面內不等向,取 [100] 方向。對應 stress.cubic_in_plane */
+  function cubicInPlane(c11, c12, c44, plane) {
+    var det = (c11 - c12) * (c11 + 2 * c12), s11 = (c11 + c12) / det, s12 = -c12 / det;
+    if (plane === '100') return { E: 1 / s11, nu: -s12 / s11 };
+    var s0 = s11 - s12 - 0.5 / c44, a = s11 - s0 / 2, b = s12 + s0 / 6;
+    return { E: 1 / a, nu: -b / a };
+  }
+  function substrate(key, name, plane) {
+    var m = cubicInPlane(SI_C11, SI_C12, SI_C44, plane);
+    return { key: key, name: name, E: m.E, nu: m.nu };
+  }
+  var SUBSTRATES = { si111: substrate('si111', 'Si(111)', '111'), si100: substrate('si100', 'Si(100)', '100') };
+
+  function positive(v) { return typeof v === 'number' && isFinite(v) && v > 0; }
+  function given(v) { return v !== null && v !== undefined; }
+
+  function customSubstrate(s, missing) {
+    if (!given(s.customE)) missing.push('基板的 E');
+    else if (!positive(s.customE)) return { error: '基板的 E 要是正數(GPa)。' };
+    if (!given(s.customNu)) missing.push('基板的 ν');
+    else if (!(isFinite(s.customNu) && s.customNu > -1 && s.customNu < 0.5)) return { error: '基板的 ν 要在 −1 到 0.5 之間。' };
+    return { substrate: { key: 'custom', name: 'custom', E: s.customE, nu: s.customNu } };
+  }
+  function pickSubstrate(s, missing) {
+    if (s.material === 'custom') return customSubstrate(s, missing);
+    return SUBSTRATES[s.material] ? { substrate: SUBSTRATES[s.material] } : { error: '不認得基板材料 ' + s.material + '。' };
+  }
+
+  /* 畫面上的設定 → 算得動或缺什麼。基板厚度沒有預設值:應力跟它的平方成正比,填錯比沒填更糟。 */
+  function readSettings(s, hasThicknessMap) {
+    var missing = [], out = { ready: false, missing: missing, error: null, fromMap: false, substrate: null, hsUm: null, hfUm: null };
+    if (!given(s.hsUm)) missing.push('基板厚度');
+    else if (!positive(s.hsUm)) { out.error = '基板厚度要是正數(µm)。'; return out; }
+    var picked = pickSubstrate(s, missing);
+    if (picked.error) { out.error = picked.error; return out; }
+    out.fromMap = hasThicknessMap && !s.useManualFilm;
+    if (!out.fromMap) {
+      if (!given(s.hfUm)) missing.push('膜厚');
+      else if (!positive(s.hfUm)) { out.error = '膜厚要是正數(µm)。'; return out; }
+    }
+    if (missing.length) return out;
+    out.substrate = picked.substrate; out.hsUm = s.hsUm; out.hfUm = out.fromMap ? null : s.hfUm;
+    out.ready = true;
+    return out;
+  }
+
+  function findThicknessChannel(spec) {
+    for (var k = 0; k < spec.channels.length; k++) if (/^th\d*$/i.test(spec.channels[k].name)) return k;
+    return -1;
+  }
+  /* 收到新的 height map 之後,記著的膜厚 map 怎麼辦。先掃的 TR 還沒配過 height,就給這一片;
+   * 已經跟上一片配過的不帶過來:換一片還用舊的膜厚,會默默算錯。 */
+  function thicknessAfterNewHeight(thickness, map) {
+    if (!thickness || thickness.map) return null;
+    return Object.assign({}, thickness, { map: map });
+  }
+
+  /* 換成 µm 的倍數。沒宣告單位當 µm(畫面會提醒);不認得的單位不猜,猜錯差 1000 倍。 */
+  function thicknessScale(unit) {
+    if (!given(unit) || unit === '') return 1;
+    if (/^(um|µm|μm)$/i.test(unit)) return 1;
+    if (/^nm$/i.test(unit)) return 1e-3;
+    throw new Error('膜厚的單位是 ' + unit + ',不認得,無法換算成 µm。');
+  }
+
+  /* Gauss–Legendre 節點與權重。K 是多項式,搭配 θ 等分是精確積分。 */
+  function gaussLegendre(n) {
+    var nodes = new Float64Array(n), weights = new Float64Array(n);
+    for (var i = 0; i < n; i++) {
+      var t = Math.cos(Math.PI * (i + 0.75) / (n + 0.5)), dp = 1;
+      for (var iter = 0; iter < 100; iter++) {
+        var p0 = 1, p1 = t;
+        for (var k = 2; k <= n; k++) { var p2 = ((2 * k - 1) * t * p1 - (k - 1) * p0) / k; p0 = p1; p1 = p2; }
+        dp = n * (t * p1 - p0) / (t * t - 1);
+        var step = p1 / dp;
+        t -= step;
+        if (Math.abs(step) < 1e-15) break;
+      }
+      nodes[i] = t;
+      weights[i] = 2 / ((1 - t * t) * dp * dp);
+    }
+    return { nodes: nodes, weights: weights };
+  }
+  var GL = null;
+
+  /* K̄:K 在半徑 radius 的圓上的面積平均。對應 stress.area_mean_laplacian */
+  function areaMeanLaplacian(fit, radius) {
+    GL = GL || gaussLegendre(QUAD_RADIAL);
+    var n = QUAD_RADIAL * QUAD_ANGULAR, x = new Float64Array(n), y = new Float64Array(n), w = new Float64Array(n), total = 0, q = 0;
+    for (var i = 0; i < QUAD_RADIAL; i++) {
+      var r = 0.5 * radius * (GL.nodes[i] + 1), wr = 0.5 * radius * GL.weights[i] * r;   // ∫ f·r dr
+      for (var j = 0; j < QUAD_ANGULAR; j++, q++) {
+        var t = 2 * Math.PI * j / QUAD_ANGULAR;
+        x[q] = r * Math.cos(t); y[q] = r * Math.sin(t); w[q] = wr;
+        total += wr;
+      }
+    }
+    var a = fit.predict(x, y, 2, 0), b = fit.predict(x, y, 0, 2), sum = 0;
+    for (q = 0; q < n; q++) sum += w[q] * (a[q] + b[q]);
+    return sum / total;
+  }
+
+  /* 在分析範圍內做低階擬合,只在有膜厚資料的地方給值:外插到沒量到的區域會亂擺,甚至變成負的。 */
+  function smoothThickness(map, res, raw) {
+    var n = raw.length, h = new Float64Array(n), any = 0, i;
+    for (i = 0; i < n; i++) { h[i] = res.mask[i] ? raw[i] : NaN; if (h[i] === h[i]) any++; }
+    if (!any) throw new Error('膜厚在分析範圍內沒有任何值:請檢查兩張 map 的晶圓中心與 flat 方向。');
+    var fit;
+    try { fit = sf.fitSurface(map.x, map.y, h, { degree: THICKNESS_DEGREE, scale: res.keepRadius }); }
+    catch (e) { throw new Error('膜厚的有效點太少或太集中,無法用 ' + THICKNESS_DEGREE + ' 階平滑。'); }
+    var fitted = fit.predict(map.x, map.y), out = new Float64Array(n);
+    for (i = 0; i < n; i++) {
+      out[i] = h[i] === h[i] ? fitted[i] : NaN;
+      if (out[i] <= 0) throw new Error('膜厚平滑後出現 ≤ 0 的值,這份膜厚 map 不能用。');
+    }
+    return { smooth: out, rms: fit.rms, degree: THICKNESS_DEGREE };
+  }
+
+  /* 對應 stress.summarize:中心 r ≤ 10 mm、邊緣 r ≥ 分析半徑 − 10 mm */
+  function summarize(values, map, keepR) {
+    var n = 0, sum = 0, lo = Infinity, hi = -Infinity, cs = 0, cn = 0, es = 0, en = 0, i;
+    for (i = 0; i < values.length; i++) {
+      var v = values[i];
+      if (v !== v) continue;
+      n++; sum += v;
+      if (v < lo) lo = v;
+      if (v > hi) hi = v;
+      var r = Math.sqrt(map.x[i] * map.x[i] + map.y[i] * map.y[i]);
+      if (r <= EDGE_BAND_MM) { cs += v; cn++; }
+      if (r >= keepR - EDGE_BAND_MM) { es += v; en++; }
+    }
+    if (!n) return { n: 0, mean: NaN, std: NaN, min: NaN, max: NaN, centre: NaN, edge: NaN };
+    var mean = sum / n, ss = 0;
+    for (i = 0; i < values.length; i++) if (values[i] === values[i]) ss += (values[i] - mean) * (values[i] - mean);
+    return { n: n, mean: mean, std: n > 1 ? Math.sqrt(ss / (n - 1)) : 0, min: lo, max: hi,
+             centre: cn ? cs / cn : NaN, edge: en ? es / en : NaN };
+  }
+
+  function meanOverMask(values, mask) {
+    var s = 0, n = 0;
+    for (var i = 0; i < values.length; i++) if (mask[i] && values[i] === values[i]) { s += values[i]; n++; }
+    return n ? s / n : NaN;
+  }
+
+  function coverage(hf, mask) {
+    var used = 0, covered = 0;
+    for (var i = 0; i < mask.length; i++) if (mask[i]) { used++; if (hf[i] === hf[i]) covered++; }
+    return used ? covered / used : 0;
+  }
+
+  function notesFor(res, settings, kBar, kBarAnalysed, hfUniform, hf, grid) {
+    var notes = [], sag = Math.abs(kBar) * res.radius * res.radius / 4;   // 碗形 z = (K̄/4)·r²;K 是 1/m = µm/mm²
+    if (grid && grid.notes) notes = notes.concat(grid.notes);
+    if (settings.fromMap && coverage(hf, res.mask) < MIN_THICKNESS_COVERAGE)
+      notes.push('膜厚只涵蓋 ' + Math.round(100 * coverage(hf, res.mask)) + '% 的分析點:請檢查兩張 map 的晶圓中心與 flat 方向。');
+    if (Math.abs(kBar - kBarAnalysed) > K_BAR_TOLERANCE * Math.abs(kBar))
+      notes.push('HR 的 K̄ 用整片晶圓(' + kBar.toPrecision(4) + ' 1/m),分析範圍內是 ' + kBarAnalysed.toPrecision(4) + ':邊緣排除區是擬合外插的。');
+    if (sag / settings.hsUm > SAG_RATIO_WARNING)
+      notes.push('弓高約 ' + sag.toPrecision(3) + ' µm,是基板厚度的 ' + (100 * sag / settings.hsUm).toPrecision(2) + '%:小變形假設開始不準;基板這麼薄時,重力造成的曲率也可能跟實測同量級,要先確認支撐方式,這個應力才能當真。');
+    if (hfUniform / settings.hsUm > THIN_FILM_RATIO)
+      notes.push('h_f 跟基板厚度相比不算小(' + hfUniform.toPrecision(3) + ' / ' + settings.hsUm + ' µm):Stoney 假設 h_f ≪ h_s,請確認兩個厚度的單位。');
+    return notes;
+  }
+
+  /* settings 來自 readSettings;grid 是 spectral.channelOnGrid 的結果(用膜厚 map 時才要)。應力單位 MPa,範圍外是 NaN。 */
+  function compute(map, res, settings, grid) {
+    if (!settings.ready) throw new Error('應力設定還不完整。');
+    var sub = settings.substrate, hs = settings.hsUm * UM, n = map.x.length, K = res.curvature.laplacian;
+    var smoothed = settings.fromMap ? smoothThickness(map, res, grid.values) : null;
+    var hf = new Float64Array(n), stoney = new Float64Array(n), hr = new Float64Array(n), i;
+    var kBar = areaMeanLaplacian(res.fit, res.radius), kBarAnalysed = areaMeanLaplacian(res.fit, res.keepRadius);
+    var q = (1 - sub.nu) / (1 + sub.nu), factor = sub.E * 1e9 * hs * hs / (12 * (1 - sub.nu)) / UM / 1e6;
+    for (i = 0; i < n; i++) {
+      hf[i] = !res.mask[i] ? NaN : smoothed ? smoothed.smooth[i] : settings.hfUm;
+      stoney[i] = factor * K[i] / hf[i];
+      hr[i] = factor * (K[i] + q * (K[i] - kBar)) / hf[i];
+    }
+    var hfUniform = settings.fromMap ? meanOverMask(grid.values, res.mask) : settings.hfUm;
+    return {
+      settings: settings, substrate: sub, hsUm: settings.hsUm, fromMap: settings.fromMap, degree: res.config.degree,
+      thicknessDegree: smoothed ? smoothed.degree : 0, thicknessRms: smoothed ? smoothed.rms : NaN,
+      channel: grid ? grid.name : null, hf: hf, hfUniform: hfUniform, kBar: kBar, kBarAnalysed: kBarAnalysed,
+      stoney: stoney, hr: hr, noiseMpa: factor * res.uniformity.seRms / hfUniform,
+      summaries: { stoney: summarize(stoney, map, res.keepRadius), hr: summarize(hr, map, res.keepRadius) },
+      notes: notesFor(res, settings, kBar, kBarAnalysed, hfUniform, hf, grid)
+    };
+  }
+
+  /* 畫面要的數字。MPa 直接用原陣列:滑鼠移動時每次都要讀,不能每次配置。 */
+  function inUnit(out, unit) {
+    if (unit === 'MPa') return { stoney: out.stoney, hr: out.hr, factor: 1 };
+    var n = out.stoney.length, s = new Float64Array(n), h = new Float64Array(n);
+    for (var i = 0; i < n; i++) { s[i] = out.stoney[i] / MPA_PER_GPA; h[i] = out.hr[i] / MPA_PER_GPA; }
+    return { stoney: s, hr: h, factor: 1 / MPA_PER_GPA };
+  }
+
+  /* 接在 analysis.summaryCsv 後面的列,鍵名跟 Python 版 summary.csv 的 stress 段相同。全 ASCII。 */
+  function summaryCsv(out) {
+    function num(v) { return isFinite(v) ? Number(v).toPrecision(6) : ''; }
+    var sub = out.substrate, rows = [['substrate', sub.name], ['substrate_E_gpa', num(sub.E)], ['substrate_nu', num(sub.nu)],
+      ['substrate_biaxial_gpa', num(sub.E / (1 - sub.nu))], ['substrate_thickness_um', out.hsUm],
+      ['film_thickness_source', out.fromMap ? 'map:' + String(out.channel).replace(/[^\x20-\x7e]|[",]/g, '_') : 'uniform'],
+      ['film_thickness_uniform_um', num(out.hfUniform)], ['k_bar_per_m', num(out.kBar)], ['k_bar_analysed_per_m', num(out.kBarAnalysed)]];
+    ['stoney', 'hr'].forEach(function (name) {
+      var m = out.summaries[name];
+      rows.push([name + '_n', m.n]);
+      [['mean', m.mean], ['std', m.std], ['min', m.min], ['max', m.max], ['range', m.max - m.min], ['centre', m.centre],
+       ['edge', m.edge], ['centre_minus_edge', m.centre - m.edge]].forEach(function (p) { rows.push([name + '_' + p[0] + '_mpa', num(p[1])]); });
+    });
+    return rows.map(function (r) { return 'stress,' + r.join(','); }).join('\r\n') + '\r\n';
+  }
+
+  core.stress = {
+    SUBSTRATES: SUBSTRATES, readSettings: readSettings, findThicknessChannel: findThicknessChannel,
+    thicknessAfterNewHeight: thicknessAfterNewHeight, thicknessScale: thicknessScale, compute: compute, inUnit: inUnit, summaryCsv: summaryCsv, areaMeanLaplacian: areaMeanLaplacian
   };
 })(typeof window !== 'undefined' ? window : global);
 
@@ -14889,7 +15193,10 @@ global.WaferReport = {
   var host = null;
   var state = { map: null, sample: null, res: null, error: null, field: 'laplacian', demo: false, layout: null,
                 config: { degree: 4, residualModel: 'paraboloid', edgeExclusionMm: 3 }, geometryNote: '',
-                spectral: null, spec: null, specPrep: null, specError: null, plChannel: 0, decimated: false };
+                spectral: null, spec: null, specPrep: null, specError: null, plChannel: 0, decimated: false,
+                stressCfg: { hsUm: null, material: 'si111', customE: null, customNu: null, useManualFilm: false, hfUm: null },
+                stressUnit: 'MPa', stressSettings: null, stress: null, stressView: null, stressError: null, stressSeen: false,
+                thickness: null, thicknessGrid: null };
 
   function el(id) { return document.getElementById(id); }
   function make(tag, cls, text) {
@@ -14926,7 +15233,16 @@ global.WaferReport = {
                get: function () { return state.spec.channels[k].values; } };
     });
   }
-  function allFields() { return FIELDS.concat(plFields()); }
+  /* 應力:設定填完才有這兩張圖。全張同號用單一色相,有張有壓時以 0 為中心,看得出零點 */
+  function stressFields() {
+    if (!state.stress) return [];
+    return [['stressStoney', '應力 Stoney', 'stoney'], ['stressHr', '應力 HR', 'hr']].map(function (d) {
+      var m = state.stress.summaries[d[2]];
+      return { id: d[0], label: d[1], unit: state.stressUnit, ramp: m.min < 0 && m.max > 0 ? 'diverging' : 'viridis', center: 'zero',
+               stress: d[2], get: function () { return state.stressView[d[2]]; } };
+    });
+  }
+  function allFields() { return stressFields().concat(FIELDS, plFields()); }
   function fieldById(id) {
     var list = allFields();
     for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i];
@@ -14954,6 +15270,7 @@ global.WaferReport = {
         state.error = e && e.message ? e.message : String(e);
       }
       analyzeSpectral();   // 曲率換了(階數、邊緣排除),相關係數也要重算
+      computeStress();
       el('resBusy').classList.add('hidden');
       render();
       if (state.res && !state.res.sweep) setTimeout(function () { computeSweep(run); }, 30);
@@ -15038,6 +15355,7 @@ global.WaferReport = {
     var box = el('resChips');
     box.innerHTML = '';
     if (!state.spec && /^pl/.test(state.field)) state.field = 'laplacian';   // PL 換掉或算不出來時,不要停在不存在的圖
+    if (!state.stress && /^stress/.test(state.field)) state.field = 'laplacian';
     allFields().forEach(function (f) {
       var b = make('button', 'chip' + (f.id === state.field ? ' on' : ''), f.label);
       b.type = 'button';
@@ -15072,6 +15390,7 @@ global.WaferReport = {
     el('resMapHint').textContent = mapHint(f, r);
   }
   function mapHint(f, r) {
+    if (f.stress) return stressHint(f);
     if (f.noiseFloor) return '色階以平均值為中心,範圍不小於 3 倍擬合雜訊,所以均勻的片子看起來就是平的。平均 ' + sig(core.linalg.mean(pickMasked(f.get(r), r.mask))) + ' 1/m。';
     if (f.id === 'residual') return '高度減掉最佳' + (r.config.residualModel === 'quadric' ? '含馬鞍的二次曲面' : '等向碗形') + '。這是高度不是應力,正負號通常跟曲率相反。';
     if (f.id === 'leveled') return '已扣掉放置傾斜。打叉的點被判定為突波,沒有用來擬合。';
@@ -15122,6 +15441,106 @@ global.WaferReport = {
       row.addEventListener('click', function () { setDegree(d); });
       box.appendChild(row);
     });
+  }
+
+  /* ---------- 應力換算 ---------- */
+  var stressRun = 0;
+
+  /* 去突波與內插在點數多時要幾秒,結果留著:改基板厚度、材料、單位都不用重做 */
+  function thicknessGrid() {
+    var t = state.thickness, sigma = state.res.config.spikeSigma, cached = state.thicknessGrid;
+    if (cached && cached.map === state.map && cached.source === t && cached.sigma === sigma) return cached.grid;
+    var ch = t.spec.channels[t.k], grid = core.spectral.channelOnGrid(state.map, t.spec, t.k, { sigma: sigma, scale: core.stress.thicknessScale(ch.unit) });
+    if (!ch.unit) grid.notes = grid.notes.concat(ch.name + ' 沒有宣告單位,目前當成 µm。');
+    state.thicknessGrid = { map: state.map, source: t, sigma: sigma, grid: grid };
+    return grid;
+  }
+  function computeStress() {
+    state.stress = null;
+    state.stressView = null;
+    state.stressError = null;
+    state.stressSettings = null;
+    if (!state.res) return;
+    var s = state.stressSettings = core.stress.readSettings(state.stressCfg, !!state.thickness);
+    if (!s.ready) return;
+    try {
+      state.stress = core.stress.compute(state.map, state.res, s, s.fromMap ? thicknessGrid() : null);
+      state.stressView = core.stress.inUnit(state.stress, state.stressUnit);
+    } catch (e) { state.stressError = e && e.message ? e.message : String(e); }
+    if (!state.stress) state.stressSeen = false;
+  }
+  /* show:填完一個欄位(不是打字途中)。第一次算出來時切到應力圖,否則填完卻要自己找按鈕,會以為沒有反應;
+   * 打字途中不切:700 會經過 7 和 70,正在看 PL 的畫面不該跳走。 */
+  function updateStress(change, show) {
+    state.stressCfg = Object.assign({}, state.stressCfg, change);
+    var run = ++stressRun;
+    el('resBusy').classList.remove('hidden');
+    setTimeout(function () {
+      if (run !== stressRun) return;
+      computeStress();
+      if (show && state.stress && !state.stressSeen) { state.field = 'stressStoney'; state.stressSeen = true; }
+      el('resBusy').classList.add('hidden');
+      if (!state.res) return;
+      renderStress();
+      renderChips();
+      renderMap();
+    }, 30);
+  }
+  function setStressUnit(unit) {
+    state.stressUnit = unit;
+    if (state.stress) state.stressView = core.stress.inUnit(state.stress, unit);
+    if (!state.res) return;
+    renderStress();
+    renderChips();
+    renderMap();
+  }
+  function numberOrNull(text) { return text === '' ? null : parseFloat(text); }
+
+  /* 假設跟著圖走:截圖傳出去也看得到這張圖是怎麼算的 */
+  function stressAssumptions() {
+    var o = state.stress, sub = o.substrate;
+    var film = o.fromMap ? '膜厚用 ' + o.channel + ' 的 ' + o.thicknessDegree + ' 階平滑(平均 ' + sig(o.hfUniform, 4) + ' µm)' : '膜厚 ' + sig(o.hfUniform, 4) + ' µm 均勻';
+    return '假設基板 ' + sub.name + '、厚 ' + sig(o.hsUm, 4) + ' µm、E/(1−ν) = ' + sig(sub.E / (1 - sub.nu), 3) + ' GPa,鍍膜前是平的;' + film + '。' +
+      '應力 ∝ 基板厚度² / 膜厚。單張鍍膜後的 WS 還含基板原形與重力下垂,片內的圖案不全是應力。張應力為正。';
+  }
+  function stressHint(f) {
+    var m = state.stress.summaries[f.stress], how = f.stress === 'hr' ? 'HR relations(軸對稱版,K 用 K + (1−ν)/(1+ν)·(K − K̄))' : '逐點 Stoney';
+    return how + ',' + state.stress.degree + ' 階擬合。平均 ' + sig(m.mean, 4) + ' MPa = ' + sig(m.mean / 1e3, 3) + ' GPa。' + stressAssumptions() +
+      '空白的小點是高度或膜厚被當成突波去掉的位置,沒有應力值。';
+  }
+  function renderStressControls() {
+    var c = state.stressCfg, hasMap = !!state.thickness, manual = !hasMap || c.useManualFilm;
+    el('resFilmMap').classList.toggle('on', !manual);
+    el('resFilmMap').disabled = !hasMap;
+    el('resFilmMap').title = hasMap ? '' : '還沒有收到 TR 的膜厚 map';
+    el('resFilmManual').classList.toggle('on', manual);
+    el('resHfWrap').classList.toggle('hidden', !manual);
+    el('resCustomSub').classList.toggle('hidden', c.material !== 'custom');
+    el('resUnitMpa').classList.toggle('on', state.stressUnit === 'MPa');
+    el('resUnitGpa').classList.toggle('on', state.stressUnit === 'GPa');
+    Array.prototype.forEach.call(document.querySelectorAll('[data-hs]'), function (b) { b.classList.toggle('on', parseFloat(b.dataset.hs) === c.hsUm); });
+    el('resStressFilm').textContent = hasMap ? '膜厚 map:' + state.thickness.spec.name : '還沒有膜厚 map';
+  }
+  function renderStress() {
+    var box = el('resStressOut'), s = state.stressSettings, o = state.stress;
+    box.innerHTML = '';
+    renderStressControls();
+    if (state.stressError) { box.appendChild(make('p', 'blockHint plWarn', '算不出應力:' + state.stressError)); return; }
+    if (s && s.error) { box.appendChild(make('p', 'blockHint plWarn', s.error)); return; }
+    if (s && s.missing.length) {
+      box.appendChild(make('p', 'blockHint', '還要填:' + s.missing.join('、') + '。' +
+        (s.missing.indexOf('基板厚度') >= 0 ? '基板厚度不設預設值,因為應力跟它的平方成正比。' : '')));
+      return;
+    }
+    if (!o) return;
+    var unit = state.stressUnit, k = state.stressView.factor, st = o.summaries.stoney, hr = o.summaries.hr, tiles = make('div', 'stats plStats');
+    tiles.appendChild(statTile('Stoney 平均', sig(k * st.mean, 4), unit, st.n + ' 點'));
+    tiles.appendChild(statTile('Stoney 最小 ~ 最大', sig(k * st.min, 3) + ' ~ ' + sig(k * st.max, 3), unit, '最大 − 最小 ' + sig(k * (st.max - st.min), 3)));
+    tiles.appendChild(statTile('HR 最小 ~ 最大', sig(k * hr.min, 3) + ' ~ ' + sig(k * hr.max, 3), unit, '軸對稱版,K 不軸對稱時會高估變化'));
+    tiles.appendChild(statTile('曲率雜訊換算', sig(k * o.noiseMpa, 2), unit, '只算擬合雜訊,不含基板原形與重力'));
+    box.appendChild(tiles);
+    box.appendChild(make('p', 'blockHint', stressAssumptions()));
+    o.notes.forEach(function (n) { box.appendChild(make('p', 'blockHint plWarn', n)); });
   }
 
   /* ---------- PL 關聯 ---------- */
@@ -15242,7 +15661,7 @@ global.WaferReport = {
     renderHeader();
     renderVerdict();
     var ok = !!state.res;
-    ['resStats', 'resMapPanel'].forEach(function (id) { el(id).classList.toggle('hidden', !ok); });
+    ['resStats', 'resMapPanel', 'resStressPanel'].forEach(function (id) { el(id).classList.toggle('hidden', !ok); });
     // 設定留著:邊緣排除填太大時算不出結果,要能在這裡改回來,不必重掃
     renderControls();
     renderNotes();
@@ -15250,6 +15669,7 @@ global.WaferReport = {
     el('resCsv').disabled = !ok;
     if (!ok) { el('resSweepPanel').classList.add('hidden'); return; }
     renderStats();
+    renderStress();
     renderChips();
     renderMap();
     renderSweep();
@@ -15290,7 +15710,8 @@ global.WaferReport = {
   function exportCsv() {
     if (!state.res) return;
     var name = state.sample ? state.sample.meta.name : 'wafer';
-    var csv = core.analysis.summaryCsv(state.res, name) + (state.spec ? core.spectral.summaryCsv(state.spec) : '');
+    var csv = core.analysis.summaryCsv(state.res, name) + (state.spec ? core.spectral.summaryCsv(state.spec) : '') +
+      (state.stress ? core.stress.summaryCsv(state.stress) : '');
     host.download(new TextEncoder().encode(csv), name.replace(/[\\/:*?"<>|]/g, '_') + '-summary.csv', 'text/csv');
   }
 
@@ -15311,6 +15732,13 @@ global.WaferReport = {
     state.config = { degree: 4, residualModel: 'paraboloid', edgeExclusionMm: 3 };
     state.decimated = !!(decoded.meta.srcW && decoded.meta.srcW > decoded.meta.w);
     state.specPrep = null;   // height 的點換了,PL 要重新內插
+    // 厚度是這一片的事,帶到下一片會默默算錯(應力 ∝ 厚度²),材料和單位留著
+    state.stressCfg = Object.assign({}, state.stressCfg, { hsUm: null, hfUm: null });
+    state.thickness = core.stress.thicknessAfterNewHeight(state.thickness, map);
+    state.thicknessGrid = null;
+    state.stressSeen = false;
+    el('resHs').value = '';
+    el('resHf').value = '';
     if (!map) return false;
     host.switchScreen('scrResult');
     renderHeader();
@@ -15329,6 +15757,21 @@ global.WaferReport = {
     el('resModelBowl').addEventListener('click', function () { setModel('paraboloid'); });
     el('resModelQuad').addEventListener('click', function () { setModel('quadric'); });
     el('resEdge').addEventListener('change', function () { setEdge(parseFloat(this.value)); });
+    [['resHs', 'hsUm'], ['resCustomE', 'customE'], ['resCustomNu', 'customNu'], ['resHf', 'hfUm']].forEach(function (f) {
+      el(f[0]).addEventListener('input', function () { var c = {}; c[f[1]] = numberOrNull(this.value); updateStress(c, false); });
+      el(f[0]).addEventListener('change', function () { updateStress({}, true); });
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('[data-hs]'), function (b) {
+      b.addEventListener('click', function () {
+        el('resHs').value = b.dataset.hs;
+        updateStress({ hsUm: parseFloat(b.dataset.hs) }, true);
+      });
+    });
+    el('resMaterial').addEventListener('change', function () { updateStress({ material: this.value }, true); });
+    el('resFilmMap').addEventListener('click', function () { updateStress({ useManualFilm: false }, true); });
+    el('resFilmManual').addEventListener('click', function () { updateStress({ useManualFilm: true }, true); });
+    el('resUnitMpa').addEventListener('click', function () { setStressUnit('MPa'); });
+    el('resUnitGpa').addEventListener('click', function () { setStressUnit('GPa'); });
     window.addEventListener('resize', function () {
       if (state.res && el('scrResult').classList.contains('active')) { renderMap(); renderPl(); }
     });
@@ -15343,6 +15786,9 @@ global.WaferReport = {
     state.error = null;
     state.spec = null;
     state.specPrep = null;
+    state.stress = null;
+    state.stressView = null;
+    state.thicknessGrid = null;
   }
 
   /* 收到 PL。height 已經算好就馬上比對,還沒有就先留著,等 height 進來一起算。回傳 true 代表已經有結果頁可看。 */
@@ -15351,6 +15797,9 @@ global.WaferReport = {
     state.specPrep = null;
     state.spec = null;
     state.plChannel = 0;
+    // 膜厚另外記著:之後再掃 PL 把 spectral 換掉時,應力還算得出來
+    var th = core.stress.findThicknessChannel(spec);
+    if (th >= 0) { state.thickness = { spec: spec, k: th, map: state.map }; state.thicknessGrid = null; }
     if (!state.map) return false;
     if (!state.res) return true;   // height 還在算(或算不出來):compute 算完會一起比對,錯誤也會顯示在結果頁
     // 去突波與內插在點數多時要幾秒:先把「計算中」畫出來再算,跟 compute 一樣。
@@ -15360,6 +15809,7 @@ global.WaferReport = {
     setTimeout(function () {
       if (run !== spectralRun || !state.res) return;
       analyzeSpectral();
+      computeStress();
       if (state.spec) state.field = 'pl0';   // 剛掃完 PL,先讓人看到 PL 有沒有對到晶圓上
       el('resBusy').classList.add('hidden');
       render();
